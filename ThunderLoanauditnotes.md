@@ -389,8 +389,3 @@ In the H-3 of the findings.md, i discussed how i used diff ./src/protocol/Thunde
 >     uint256 public constant FEE_PRECISION = 1e18;
 
 The < means that this was a line in the first contract that wasnt in the second. The > means that this was a line in the second contract that wasnt in the first. Very useful tool and you should use this where necessary.
-
-# 10 DO NOT LEAVE ANY STONE UNTURNED. MONEY IN EVERY LINE OF CODE. YOUR JOB IS TO BRING IT OUT
-
-This is an extension of point 8 about diving deep into the maths of any protocol. In the same sense, you need to dive deep into every line you dont understand. If you see any line in the code that looks/seems confusing, your brain tends to try to ignore/come back to it. This CANNOT happen under any circumstance. You need to understand the code like you wrote it and this includes every single part of the code. Anything
-that seems strange is one of 2 things for you. Something to add to learning points in the notes.md or a bug and you cannot afford to miss either. This is as important as diving into the maths of any protocol. Think about it like this. There is money in every line of code you read. Your job is to bring it out
