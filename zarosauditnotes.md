@@ -1589,3 +1589,281 @@ This is a very important point and one you must keep in mind. When looking at a 
 It was good I asked that and kept looking into CreditDelegationBranch::settlevaultsdebt as it led me to 2 more bugs which were CreditDelegationBranch::settlevaultsdebt incorrectly swaps token from marketmakingengine and not directly from Zlpvault which breaks protocol intended functionality and Incorrect swap amount in CreditDelegationBranch::settleVaultsDebt improperly inflates the tokens to swap leading to DOS or/and oversettling vault debt.
 
 If I just assumed the fact that vault debt would always be zero which causes CreditDelegationBranch::settlevaultsdebt to settle zero debt and then moved on, I would have missed 2 more highs which is criminal and something you cannot afford to do.
+
+# 19 COMPARE SHARE CALCULATIONS TO ERC4626 CALCULATIONS FOR SHARES WITH VAULTS
+
+This idea came from someone else's finding I saw on zaros and the main thing to note is that whenever a protocol is implementing a vault, they may not use the ERC4626 standard exactly. They might choose to adapt the formulae for assets to share ratio to serve whatever purposes they want. Zaros did exactly this as they decided to include the total debt in the formula when calculating how many shares a user should get when depositing assets. You can look in the ZpVault.sol contract to see what they did. 
+
+By doing this, it exposed a way for an attacker to get a lot more shares for way less assets. Note that inflation attacks arent the only problems that could occur with vaults so this is something you have to keep in mind. See details of the finding below:
+
+Summary
+
+An attacker can take advantage of the vault’s debt dynamics to gain an unfair share allocation. When the vault has a high level of debt, the share price decreases, enabling the attacker to mint an excessive number of shares for a minimal deposit. Once the debt is repaid, the share price returns to its normal level, allowing the attacker to redeem their shares for a significantly higher value, extracting substantial profits at the expense of the vault and its honest participants.
+
+ Impact
+
+* **Funds Drain:** The attacker can drain funds from the vault, leading to significant losses for other depositors.
+* **System Insolvency:** The vault may become insolvent, undermining trust in the protocol and causing long-term damage to its reputation.
+
+<https://github.com/Cyfrin/2025-01-zaros-part-2/blob/35deb3e92b2a32cd304bf61d27e6071ef36e446d/src/zlp/ZlpVault.sol#L190>
+
+<https://github.com/Cyfrin/2025-01-zaros-part-2/blob/35deb3e92b2a32cd304bf61d27e6071ef36e446d/src/zlp/ZlpVault.sol#L172>
+
+***
+
+ Attack Scenario
+
+ **1. Initial Vault State (Healthy)**
+
+```solidity
+// Initial state
+uint256 totalAssets = 1000; // Total assets in the vault
+uint256 debt = 0; // Vault debt
+uint256 totalAssetsMinusVaultDebt = totalAssets - debt; // 1000
+uint256 totalShares = 1000; // Total shares issued
+uint256 sharePrice = totalAssetsMinusVaultDebt / totalShares; // 1 asset per share
+```
+
+ **2. Debt Increase**
+
+A malicious user monitors the protocol for opportunities to increase the vault's debt or actively participates in creating debt.
+
+```solidity
+uint256 debt = 999; // Artificially inflated debt
+totalAssetsMinusVaultDebt = totalAssets - debt; // 1
+uint256 newSharePrice = totalAssetsMinusVaultDebt / totalShares; // 0.001 assets per share
+```
+
+ **3. Attacker Deposits 1 Asset & Mints Shares**
+
+Using the share minting formula:
+<https://github.com/Cyfrin/2025-01-zaros-part-2/blob/35deb3e92b2a32cd304bf61d27e6071ef36e446d/src/market-making/branches/VaultRouterBranch.sol#L224>
+
+```solidity
+uint256 previewSharesOut = assetsIn.mulDiv(
+    totalShares + 10 ** decimalOffset,
+    totalAssetsMinusVaultDebt,
+    MathOpenZeppelin.Rounding.Floor
+);
+```
+
+* With `assetsIn = 1` and `totalAssetsMinusVaultDebt = 1`, the attacker mints:
+
+  ```solidity
+  uint256 mintedShares = 1 * (1000 / 1); // 1000 shares
+  ```
+
+ **4. Debt Decrease**
+
+After a certain period, the vault's debt decreases.
+
+```solidity
+uint256 debt = 0; // Debt repaid
+totalAssetsMinusVaultDebt = totalAssets - debt; // 1000
+```
+
+ **5. Attacker Redeems Shares for Assets**
+
+Using the redemption formula:
+<https://github.com/Cyfrin/2025-01-zaros-part-2/blob/35deb3e92b2a32cd304bf61d27e6071ef36e446d/src/market-making/branches/VaultRouterBranch.sol#L178>
+
+```solidity
+uint256 previewAssetsOut = sharesIn.mulDiv(
+    totalAssetsMinusVaultDebt,
+    totalShares + 10 ** decimalOffset,
+    MathOpenZeppelin.Rounding.Floor
+);
+```
+
+* Redeeming `1000 shares`:
+
+  ```solidity
+  uint256 redeemedAssets = 1000 * (1000 / 2000); // 500 assets
+  ```
+* **Final Profit:** The attacker deposited **1 asset** and redeemed **500 assets**, netting a profit of **499 assets**.
+
+***
+
+ Root Cause
+
+The vulnerability arises because the share minting and redemption formulas are directly influenced by `totalAssetsMinusVaultDebt`. When `totalAssetsMinusVaultDebt` is artificially reduced (due to inflated debt), the share price drops significantly, allowing attackers to mint an excessive number of shares. Once the debt is repaid, the share price increases, enabling the attacker to redeem their shares at a much higher value, resulting in substantial profits.
+
+
+# 20 STEPWISE JUMPS 
+
+This was a finding you missed in the zaros audit that is very important and you cannot miss again. A stepwise jump exploit is a form of attack where an exploiter takes advantage of how rewards, interest rates, or emissions are updated in discrete steps rather than continuously. So say a protocol aims to distribute rewards to its holders, it then sends the fees to be distributed to holders in a function , what can happen is that an attacker can frontrun that transaction where fees are sent to the protocol and then become a holder just before the fees are sent to the protocol and then they will be able to get a portion of the fees sent to the contract and once they get this, they can immediately unstake the token and leave with the extracted fees.
+
+This was exactly the case with zaros which was detailed in this finding which i didnt spot. See below:
+
+ Summary
+
+In VaultRouterBranch.sol:stake(), users stake their `Vault.indexTokens` to earn rewards based on their share. However malicious users can frontrun the reward distribution by quickly staking their tokens right before distribution, receiving the same proportional rewards as long-term stakers.
+
+ Vulnerability Details
+
+Basically fee distribution being initiated by `FeeConversionKeeper` by checking checkUpkeep() function and then calling performUpkeep() to convert accumulated fees to WETH:
+
+
+```solidity
+function checkUpkeep(bytes calldata /**/ ) external view returns (bool upkeepNeeded, bytes memory performData) {
+    FeeConversionKeeperStorage memory self = _getFeeConversionKeeperStorage();
+
+    uint128[] memory liveMarketIds = self.marketMakingEngine.getLiveMarketIds();
+
+    bool distributionNeeded;
+    uint128[] memory marketIds = new uint128[]();
+    address[] memory assets = new address[]();
+    uint256 index = 0;
+    uint128 marketId;
+
+    // Iterate over markets by id
+    for (uint128 i; i < liveMarketIds.length; i++) {
+        marketId = liveMarketIds[i];
+
+        (address[] memory marketAssets, uint256[] memory feesCollected) =
+            self.marketMakingEngine.getReceivedMarketFees(marketId);
+
+        // Iterate over receivedMarketFees
+        for (uint128 j; j < marketAssets.length; j++) {
+            distributionNeeded = checkFeeDistributionNeeded(marketAssets[j], feesCollected[j]);
+
+            if (distributionNeeded) {
+                // set upkeepNeeded = true
+                upkeepNeeded = true;
+
+                // set marketId, asset
+                marketIds[index] = marketId;
+                assets[index] = marketAssets[j];
+
+                index++;
+            }
+        }
+    }
+
+    if (upkeepNeeded) {
+        performData = abi.encode(marketIds, assets);
+    }
+}
+
+// call FeeDistributionBranch::convertAccumulatedFeesToWeth
+function performUpkeep(bytes calldata performData) external override onlyForwarder {
+    FeeConversionKeeperStorage memory self = _getFeeConversionKeeperStorage();
+
+    IMarketMakingEngine marketMakingEngine = self.marketMakingEngine;
+
+    // decode performData
+    (uint128[] memory marketIds, address[] memory assets) = abi.decode(performData, (uint128[], address[]));
+
+    // convert accumulated fees to weth for decoded markets and assets
+    for (uint256 i; i < marketIds.length; i++) {
+        marketMakingEngine.convertAccumulatedFeesToWeth(marketIds[i], assets[i], self.dexSwapStrategyId, "");
+    }
+}
+
+```
+
+In the marketMakingEngine.convertAccumulatedFeesToWeth() contract handles WETH reward distribution:
+
+
+```solidity
+function _handleWethRewardDistribution(
+    Market.Data storage market,
+    address assetOut,
+    UD60x18 receivedWethX18
+)
+    internal
+{
+    // cache the total fee recipients shares as UD60x18
+    UD60x18 feeRecipientsSharesX18 = ud60x18(MarketMakingEngineConfiguration.load().totalFeeRecipientsShares);
+
+    // calculate the weth rewards for protocol and vaults
+    UD60x18 receivedProtocolWethRewardX18 = receivedWethX18.mul(feeRecipientsSharesX18);
+    UD60x18 receivedVaultsWethRewardX18 =
+        receivedWethX18.mul(ud60x18(Constants.MAX_SHARES).sub(feeRecipientsSharesX18));
+
+    // calculate leftover reward
+    UD60x18 leftover = receivedWethX18.sub(receivedProtocolWethRewardX18).sub(receivedVaultsWethRewardX18);
+
+    // add leftover reward to vault reward
+    receivedVaultsWethRewardX18 = receivedVaultsWethRewardX18.add(leftover);
+
+    // adds the weth received for protocol and vaults rewards using the assets previously paid by the engine
+    // as fees, and remove its balance from the market's `receivedMarketFees` map
+    market.receiveWethReward(assetOut, receivedProtocolWethRewardX18, receivedVaultsWethRewardX18);
+
+    // recalculate markes' vaults credit delegations after receiving fees to push reward distribution
+    Vault.recalculateVaultsCreditCapacity(market.getConnectedVaultsIds());
+}
+
+```
+
+Due to the combination of market.receive Distribution.distributeValue() function is triggered, resulting in fees being distributed to users.
+
+```solidity
+function distributeValue(Data storage self, SD59x18 value) internal {
+    if (value.eq(SD59x18_ZERO)) {
+        return;
+    }
+
+    UD60x18 totalShares = ud60x18(self.totalShares);
+
+    if (totalShares.eq(UD60x18_ZERO)) {
+        revert Errors.EmptyDistribution();
+    }
+
+    SD59x18 deltaValuePerShare = value.div(totalShares.intoSD59x18());
+
+    self.valuePerShare = sd59x18(self.valuePerShare).add(deltaValuePerShare).intoInt256();
+}
+```
+
+So by checking `FeeConversionKeeper.sol:checkUpkeep()` frontrunner can understand when `Distribution.distributeValue()` will be called.
+And by staking his tokens just before fee distribution he can receive rewards.
+
+You can view the full finding at: https://codehawks.cyfrin.io/c/2025-01-zaros-part-2/s/168 
+
+
+
+# 21 ALWAYS DOUBLE CHECK PAUSED FUNCTIONALITY
+
+this was another easy finding I missed where zaros had paused functionality to be able to pause the contract and its functions at any point. Whenever you see any protocol that utilizes the pause functionality, it is so important to go and check all key functions if the pause modifier is applied to every key function because it seems mundane but a lot of protocols will forget especially when they have a lot of lines of code to write, it is easy to forget. You must always look out for this. See the finding below:
+
+ Summary
+
+The `claimFees` function in `FeeDistributionBranch.sol` uses `Vault.load()` instead of `Vault.loadLive()`, allowing users to claim fees from paused vaults. This bypasses the vault's pause mechanism which is designed to halt all vault operations during paused state.
+
+Vulnerability Details
+
+The `claimFees` function uses basic vault loading without status validation:
+```solidity
+function claimFees(uint128 vaultId) external {
+    // Uses basic load without vault status check
+@>  Vault.Data storage vault = Vault.load(vaultId);
+    
+    bytes32 actorId = bytes32(uint256(uint160(msg.sender)));
+    
+    // Checks shares and claims fees
+    if (vault.wethRewardDistribution.actor[actorId].shares == 0) 
+        revert Errors.NoSharesAvailable();
+    
+    UD60x18 amountToClaimX18 = vault.wethRewardDistribution.getActorValueChange(actorId).intoUD60x18();
+    if (amountToClaimX18.isZero()) 
+        revert Errors.NoFeesToClaim();
+    
+    // Updates distribution state and transfers WETH
+    vault.wethRewardDistribution.accumulateActor(actorId);
+    address weth = MarketMakingEngineConfiguration.load().weth;
+    // ... WETH transfer logic
+}
+```
+
+The issue arises because:
+
+1. `Vault.load()` is used which doesn't check vault status
+2. Fees can be claimed even when the vault is paused
+3. This contradicts the vault's pause mechanism which should halt all operations
+
+ Impact
+
+Allows fee claims when vault operations should be frozen
+ You can view the full finding at: https://codehawks.cyfrin.io/c/2025-01-zaros-part-2/s/618
