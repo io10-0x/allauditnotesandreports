@@ -1867,3 +1867,40 @@ The issue arises because:
 
 Allows fee claims when vault operations should be frozen
  You can view the full finding at: https://codehawks.cyfrin.io/c/2025-01-zaros-part-2/s/618
+
+# 22 USDT PARTIAL ALLOWANCE REVERT ON APPROVALS
+
+ This was another cool finding from reported issues. The key takeaway point is that USDT doesnt enable incrreasing allowance. what this means is that if you set an approval for an amount of usdt token to another address and that address hasnt used up the whole approved amount and you try to approve more tokens, the tx will revert.
+
+ You need to revoke the approval for that address (set it to 0) and then re-approve if you want to approve a different amount. This is important for protocols who run approvals before sending tokens to other contracts which can be key logic. If they support USDT, this check is something to consider and if they run their approvals for USDT without checking, then you have a solid finding there. See the report below:
+
+ Partial‐Approve Revert Vulnerability in UniswapV2Adapter
+
+The UniswapV2Adapter contract can revert on swap operations for tokens like USDT that have a non‐standard allowance mechanism. USDT historically reverts if you attempt to change an existing non‐zero allowance to another non‐zero value. Consequently, a leftover allowance or dust balance of USDT in the adapter can break all subsequent approvals.
+
+Although the Zaros protocol vaults are not currently configured to accept USDT, the published documentation states that USDT support will be added. As of now, if USDT were used with the UniswapV2Adapter, it could cause DoS‐type reverts and prevent any further USDT swaps.
+
+Vulnerability Details
+USDT’s ERC‐20 implementation reverts on partial approval changes. Specifically, if the adapter already has a non‐zero allowance for USDT, a subsequent call to:
+
+```solidity
+IERC20(tokenIn).approve(uniswapV2SwapStrategyRouter, amountIn);
+```
+
+where amountIn != 0, reverts under USDT’s rules unless the allowance is first reset to zero. This means a malicious actor (or an accidental leftover) could deposit a small USDT amount into the adapter, leaving a non‐zero allowance. Next time the adapter tries to set a new allowance for USDT, the transaction fails.
+
+As a result, all USDT swaps will become blocked, causing a denial of service for that token. This vulnerability is specific to USDT or any similarly non‐compliant token.
+
+The UniswapV2Adapter code repeatedly does:
+
+```solidity
+IERC20(swapPayload.tokenIn).approve(router, swapPayload.amountIn);
+```
+
+With no zero‐allowance reset.
+
+A malicious user can “dust” 1 unit of USDT or rely on leftover allowance, causing subsequent approvals to revert. 
+
+You can view the full finding at: https://codehawks.cyfrin.io/c/2025-01-zaros-part-2/s/110
+
+
