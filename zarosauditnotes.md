@@ -1824,7 +1824,7 @@ You can view the full finding at: https://codehawks.cyfrin.io/c/2025-01-zaros-pa
 
 
 
-# 21 ALWAYS DOUBLE CHECK PAUSED FUNCTIONALITY
+# 21 ALWAYS DOUBLE CHECK PAUSED FUNCTIONALITY, SLITHER ENTRY POINTS USEFUL COMMAND
 
 this was another easy finding I missed where zaros had paused functionality to be able to pause the contract and its functions at any point. Whenever you see any protocol that utilizes the pause functionality, it is so important to go and check all key functions if the pause modifier is applied to every key function because it seems mundane but a lot of protocols will forget especially when they have a lot of lines of code to write, it is easy to forget. You must always look out for this. See the finding below:
 
@@ -1867,6 +1867,13 @@ The issue arises because:
 
 Allows fee claims when vault operations should be frozen
  You can view the full finding at: https://codehawks.cyfrin.io/c/2025-01-zaros-part-2/s/618
+
+The way to avoidmissing simple findings like this is to use a very useful slither command which is:
+
+```bash
+slither . --print entry-points
+```
+The result of this will show you all of the entry points in the contracts and all modifiers and will help you see which functions are paussed, which have only owner, etc. This is a very useful tool.
 
 # 22 USDT PARTIAL ALLOWANCE REVERT ON APPROVALS
 
