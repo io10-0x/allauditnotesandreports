@@ -553,6 +553,24 @@ Since only decimals() exists in multiple places, it is the only function requiri
 
 # 9 TRY-CATCH BLOCKS CAN BE SKIPPED. FUNCTION ATOMICITY CAN BE SKIPPED, 63/64 GAS RULE
 
+Before we go full into the finding, you need to understand what a try/catch block actually does. You have a rough idea but a clear definition to make it clear is needed. In a try/catch block , the aim is mainly for error handling. If we have a function that calls another function inside it , we know that if the internal function reverts, the whole function will revert which is standard. In some cases though, we may not want the whole function to revert if the internal function reverts. This is what try/catch blocks do. See example below:
+
+```solidity
+try externalContract.someFunction(arg1, arg2) returns (ReturnType result) {
+    // ✅ Runs if the call succeeds
+} catch {
+    // ❌ Runs if the call fails (reverts or throws an error)
+}
+```
+
+Key Facts About try-catch:
+
+- Only works for external contract calls (externalContract.someFunction(...)).
+- Does not work for internal Solidity functions (functions in the same contract).
+- Can catch both reverts and errors from external function calls.
+
+This is pretty much everything you need to know about try/catch blocks. Pretty standard stuff really. Lets move on to how it works in the finding.
+
 While looking through previous findings, i saw something very interesting about try/catch blocks. The key point is that if you see a try/catch block, you need to look into how crucial the information in that try/catch block is because if it very important, what an attacker can do is call the function with just enough gas to make all the other parts of the transaction work but cause the code in the try block to fail but still be able to make the transaction succeed. This is something I didnt know was possible but this is a very key bit of information you MUST keep in mind. The finding explains this perfectly. See below:
 
 Relevant GitHub Links
