@@ -1335,7 +1335,7 @@ So let me present a different way besides assumption analysis you can use to qui
 
 You can see this in H-16 of the RAACfindings.md file where i found a case where an error should have been used in the function but wasnt and the only way i knew that was because it was used in another function that did a similar thing but wasnt used in that function which lead to a high vulnerability error. If i did a global search on the custom error, I would have been able to spot the issue faster which is why this custom error checks can be useful if you dont have much time on your hands.
 
-# DAOS AND GOVERNANCE EXPLOITS TO BE AWARE OF
+# 15 DAOS AND GOVERNANCE EXPLOITS TO BE AWARE OF
 
 As we as using voting escrows (ve mechanics), RAAC implemented the use of a DAO which is something we covered during the foundry course so you can go over that to for a recap but here we are going to cover some key things you need to look out for whnever you see voting escrows or DAO's being used in protocols.
 
@@ -1354,3 +1354,58 @@ So lets look at how this works, if we can get a flashloan, buy the governance to
 This sounds like a lot of steps at first but if we take out the aspect of the flashloan, the idea would simply be if we can vote and execute the proposal, i.e. end voting in the same transaction, then there is an issue. As you can imagine, the issue is that I can take a flashloan for a large amount, buy the governance token, vote on any proposal i want with those tokens, end the proposal so voting is done, then sell the tokens i bought and pay back my loan. So i can essentially skew the voting to whatever way i want with this attack. I actually reported something in similar in RAAC and you can read the finding in raacfindings.md in H-19. This finding didnt use a flashloan but you can apply the flashloan concept to that.
 
 There was also a beanstalk hack where the hacker took 180 million by doing this exact thing. it was actually exactly this that happened and you can read about it online. We dont really need to explain it step by step because the exploit wasnt complicated. It was exactly as I explained above. You can read about the exploit at https://www.halborn.com/blog/post/explained-the-beanstalk-hack-april-2022 or any resources you find online.
+
+# 16 IF FUNDS COME INTO A CONTRACT, IS THERE A WAY THE FUNDS CAN LEAVE THE CONTRACT ?
+
+This sounds so basic but it is something so easy that you missed in this competition that was so stupid. The summary is that if funds come into any contract, is there a way that these funds or NFT or whatever can leave the contract ?? If there is no way, then the funds are locked in the contract which is obviously a huge issue. See the finding below:
+
+ Description
+
+The mint price of any given NFT will be paid by the buyer using the `RAACNFT::mint` function, claiming a certain NFT with an ID and a Price. While the contract is pulling the price and keeps it within, it lacks though functionality to either approve or forward those funds. Therefore locking them in the contract.
+
+ Vulnerable Code
+
+`RAACNFT::mint`:
+
+```Solidity
+    function mint(uint256 _tokenId, uint256 _amount) public override {
+        uint256 price = raac_hp.tokenToHousePrice(_tokenId);
+        if(price == 0) { revert RAACNFT__HousePrice(); }
+        if(price > _amount) { revert RAACNFT__InsufficientFundsMint(); }
+        token.safeTransferFrom(msg.sender, address(this), _amount);
+        _safeMint(msg.sender, _tokenId);
+        if (_amount > price) {
+            uint256 refundAmount = _amount - price;
+            token.safeTransfer(msg.sender, refundAmount);
+        }
+        emit NFTMinted(msg.sender, _tokenId, price);
+    }
+```
+
+As you can clearly see the token (presumably crvUSD) is getting pulled from the sender into the contract. Now looking at the interface of `IRAACNFT`:
+
+```Solidity
+interface IRAACNFT is IERC721, IERC721Enumerable {
+    function mint(uint256 _tokenId, uint256 _amount) external;
+    function getHousePrice(uint256 _tokenId) external view returns (uint256);
+    function addNewBatch(uint256 _batchSize) external;
+    function setBaseUri(string memory _uri) external;
+    function currentBatchSize() external view returns (uint256);
+    // Events
+    event NFTMinted(address indexed minter, uint256 tokenId, uint256 price);
+    event BaseURIUpdated(string uri);
+    // Errors
+    error RAACNFT__BatchSize();
+    error RAACNFT__HousePrice();
+    error RAACNFT__InsufficientFundsMint();
+    error RAACNFT__InvalidAddress();
+}
+```
+
+We can see that this contract does not have a `transfer` or `approve` function and therefore locks those ERC-20 tokens inside the contract.
+
+This is super basic stuff but you managed to not spot it so it very important to keep in mind for future competitions and audits.
+
+You can view the full finding at: https://codehawks.cyfrin.io/c/2025-02-raac/s/858
+
+
