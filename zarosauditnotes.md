@@ -1910,4 +1910,105 @@ A malicious user can “dust” 1 unit of USDT or rely on leftover allowance, ca
 
 You can view the full finding at: https://codehawks.cyfrin.io/c/2025-01-zaros-part-2/s/110
 
+# 23 PAY ATTENTION TO FOR LOOPS, SINGLE ITERATION VS FINAL RESULT
+
+The details of this exploit aren't actually important as its nothing that we dont know about the reason why you missed it is because you didnt pay attention to single iteration vs final result.
+
+So in this bug, the main idea is that there was a for loop which was supposed to do something and in each iteration, it did what it was supposed to do but when the final result came out, the cummulation of what each iteration didnt add up to what the for loop was supposed to do because one variable was passed in each iteration that affected each iteration and the sum of its effect on each iteration messed up the final result. If you remeber the msg.value bug that occured where msg.value used in a loop can be very problematic which i covered in one of the audit notes on github, this was the overall cause of the issue. The single iteration did what it was meant to but the overall result was devastatingly wrong. This is the same issue here but the effect is a bit less but still significant. This is something you need to watch out for whenever you see a for loop, your mind must go to single iteration vs final result exploit. 
+
+You can read about the full issue here: https://codehawks.cyfrin.io/c/2025-01-zaros-part-2/s/872 
+
+I would normally paste code snippets and stuff but the detail of the bug is irrelevant. The main thing to note is the single iteration vs final result I stated above.
+
+# 24 PAY ATTENTION TO ARRAYS INITIALIZED WITH ARBITRARY SIZES
+
+The summary of this finding is that if you see any array being initialised anywhere in solidity, make sure that the array is not given an arbitrary size. i.e. a size that doesnt correspond to the amount of elements stored in the array. This is kinda hard to explain without looking at the exploit. So lets have a look:
+
+ Summary
+
+The function `performUpkeep` in the FeeConversionKeeper contract always reverts due to an improper memory allocation issue in checkUpkeep. Specifically, the code over-allocates memory for the marketIds and assets arrays.
+
+ Vulnerability Details
+
+The arbitrary 10 multiplication leads to uninitialized memory slots, causing invalid data access. performUpkeep attempts to process these uninitialized indexes, leading to a revert.
+The error arises when trying to access `totalAssets()` on an uninitialized zero address, leading to a revert.
+
+```solidity
+/src/external/chainlink/keepers/fee-conversion-keeper/FeeConversionKeeper.sol:69
+69:     function checkUpkeep(bytes calldata /**/ ) external view returns (bool upkeepNeeded, bytes memory performData) {
+70:         FeeConversionKeeperStorage memory self = _getFeeConversionKeeperStorage();
+71: 
+72:         uint128[] memory liveMarketIds = self.marketMakingEngine.getLiveMarketIds();
+73: 
+74:         bool distributionNeeded;
+75:         uint128[] memory marketIds = new uint128[](liveMarketIds.length * 10);
+76:         address[] memory assets = new address[](liveMarketIds.length * 10);
+```
+
+Consider the following Proof of code:
+
+
+```solidity
+/test/integration/external/chainlink/keepers/fee-conversion/checkUpkeep/checkUpkeep.t.sol:32
+32:     function test_WhenMarketsHaveMoreThanMinFeeForDistribution( // @audit POC
+33:     )
+34:         external
+35:         givenCheckUpkeepIsCalled
+36:     {
+37:         uint256 marketId=3967010399546;
+38:         uint256 amount=115792089237316195423570985008687907853269984665640564039457584007913129639932;
+39:         uint256 minFeeDistributionValueUsd=9306648518645823426120026427;
+40: 
+41:         PerpMarketCreditConfig memory fuzzPerpMarketCreditConfig = getFuzzPerpMarketCreditConfig(marketId);
+42: 
+43:         minFeeDistributionValueUsd = bound({
+44:             x: minFeeDistributionValueUsd,
+45:             min: 1,
+46:             max: convertUd60x18ToTokenAmount(address(usdc), USDC_DEPOSIT_CAP_X18)
+47:         });
+48: 
+49:         amount = bound({
+50:             x: amount,
+51:             min: minFeeDistributionValueUsd,
+52:             max: convertUd60x18ToTokenAmount(address(usdc), USDC_DEPOSIT_CAP_X18)
+53:         });
+54:         deal({ token: address(usdc), to: address(fuzzPerpMarketCreditConfig.engine), give: amount });
+55: 
+56:         changePrank({ msgSender: users.owner.account });
+57: 
+58:         configureFeeConversionKeeper(1, 1);
+59: 
+60:         changePrank({ msgSender: address(fuzzPerpMarketCreditConfig.engine) });
+61: 
+62:         marketMakingEngine.receiveMarketFee(fuzzPerpMarketCreditConfig.marketId, address(usdc), amount);
+63: 
+64:         (bool upkeepNeeded, bytes memory performData) = FeeConversionKeeper(feeConversionKeeper).checkUpkeep("");
+65: 
+66:         (uint128[] memory marketIds, address[] memory assets) = abi.decode(performData, (uint128[], address[]));
+67:         console.log("marketIds" , marketIds.length);
+68:         // it should return true
+69:         assertTrue(upkeepNeeded);
+70: 
+71:         assertEq(assets[0], address(usdc));
+72:         assertEq(marketIds[0], fuzzPerpMarketCreditConfig.marketId);
+73: 
+74:         FeeConversionKeeper(feeConversionKeeper).performUpkeep(performData);
+75:     }
+```
+
+## Output
+
+```shell
+
+    │   │   │   │   ├─ [0] 0x0000000000000000000000000000000000000000::totalAssets() [staticcall]
+    │   │   │   │   │   └─ ← [Stop] 
+    │   │   │   │   └─ ← [Revert] EvmError: Revert
+
+```
+
+The revert occurs when accessing an uninitialized zero address index, causing `totalAssets()` to fail.
+
+
+So as you can see, in the checkUpkeep function, a marketIds array was initialised with a random size that didnt correspond to the amount of marketIds that the vault actually had. What this meant was that when checkUpkeep called the function and looped through the marketIds array to get the totalAssets in the market, it would get to an element in the marketIds array which has a zero value so trying to call totalAssets on a zero address will obviously revert. So the moral of the story is that if you see any array initialised or looped through, make sure to check the size of the array and make sure that all elements in the array actually have values in them because if actions are performed on an element that has no values in it, it could lead to an unexpected revert.
+
 
