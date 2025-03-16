@@ -2011,4 +2011,65 @@ The revert occurs when accessing an uninitialized zero address index, causing `t
 
 So as you can see, in the checkUpkeep function, a marketIds array was initialised with a random size that didnt correspond to the amount of marketIds that the vault actually had. What this meant was that when checkUpkeep called the function and looped through the marketIds array to get the totalAssets in the market, it would get to an element in the marketIds array which has a zero value so trying to call totalAssets on a zero address will obviously revert. So the moral of the story is that if you see any array initialised or looped through, make sure to check the size of the array and make sure that all elements in the array actually have values in them because if actions are performed on an element that has no values in it, it could lead to an unexpected revert.
 
+# 25 VARIABLE DEPENDENCIES EXPLOIT
+
+The same way contracts have dependencies and different infrastructure have different dependencies, variables also have dependencies but they are not as defined as in the first 2 situations. When looking at any codebase, you will find that one variable is usually always set based on the value of another variable. This is what I mean by variable dependencies. So the variable value depends on the value of another variable. In some codebases, you will see that one variable depends on a lot of other variables. Lets see a simple example:
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.19;
+
+contract ExampleContract {
+    function calculateFinalValue(
+        uint256 baseValue,
+        uint256 multiplier,
+        uint256 divisor,
+        uint256 addition
+    ) public pure returns (uint256) {
+        require(divisor != 0, "Divisor cannot be zero");
+
+        uint256 result = ((baseValue * multiplier) / divisor) + addition;
+        return result;
+    }
+}
+
+```
+
+So as you can see, the result variable depends on the value of baseValue, multiplier, divisor and addition. If any of these variables are changed, the result will change. This is what I mean by variable dependencies. This is a very simple example but in a real codebase, these variables can be split across many functions so it may be hardher to spot. The point is that you need to have a mental or physical map of almost all the variable dependencies of a particular variable and the reason is because you will occassionally find circular dependencies in codebases and when you see these, it is an immediate bug. There was a finding in the zaros competition you missed that covered this perfectly. So lets look at the details of this finding:
+
+ Summary
+
+Circular dependency between calculations of market's `totalDelegatedCreditUsd` and vault's `depositedUsdc` will lead to inconsistent calculation result for every `Vault.recalculateVaultsCreditCapacity` function call.
+
+Vulnerability Details
+
+Root Cause Analysis
+
+Circular dependency can be illustrated as follows:
+
+ `market.totalDelegatedCreditUsd`-> `vault.totalCreditCapacityUsd`-> `vault.depositedUsdc`-> `market.usdcCreditPerVaultShare` -> `market.totalDelegatedCreditUsd`
+
+Let's see why it is like that:
+
+* `market.totalDelegatedCreditUsd` is a credit-delegation-weighted sum of vault's `totalCreditCapacityUsd` [ref](https://github.com/Cyfrin/2025-01-zaros-part-2/blob/35deb3e92b2a32cd304bf61d27e6071ef36e446d/src/market-making/leaves/Vault.sol#L588-L605)
+  
+* Thus, `market.totalDelegatedCreditUsd` depends on `vault.totalCreditCapacityUsd`
+  
+* `vault.totalCreditCapacityUsd` is `totalAssetsUsd - vault.marketsRealizedDebtUsd + vault.depositedUsdc - vault.marketsUnrealizedDebtUsd` [ref](https://github.com/Cyfrin/2025-01-zaros-part-2/blob/35deb3e92b2a32cd304bf61d27e6071ef36e446d/src/market-making/leaves/Vault.sol#L207-L219)
+  
+  * Thus `vault.totalCreditCapacityUsd` depends on `vault.depositedUsdc`
+  
+* `vault.depositedUsdc` is a credit-delegation-weighted sum of `market.usdcCreditPerVaultShare` [ref](https://github.com/Cyfrin/2025-01-zaros-part-2/blob/35deb3e92b2a32cd304bf61d27e6071ef36e446d/src/market-making/leaves/Vault.sol#L207-L219)
+  
+  * Thus `vault.depositedUsdc` depends on `market.usdcCreditPerVaultShare`
+  
+* `market.usdcCreditPerVaultShare` is `netUsdcReceived / market.totalDelegatedCreditUsd` [ref](https://github.com/Cyfrin/2025-01-zaros-part-2/blob/35deb3e92b2a32cd304bf61d27e6071ef36e446d/src/market-making/leaves/Market.sol#L443-L458)
+  
+  * Thus `market.usdcCreditPerVaultShare` depends on `market.totalDelegatedCreditUsd`
+
+This loophole will lead to inconsistent vault credit capacity calculation.
+
+There was a bug found due to the circular depenndencies in these 4 variables and it led to a very rare medium finding so you need to be on the lookout for an circular dependencies you can find. You can view the full finding at: https://codehawks.cyfrin.io/c/2025-01-zaros-part-2/s/192.
+
+
 
