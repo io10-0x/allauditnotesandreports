@@ -374,9 +374,6 @@ As the point above stated, people are only motivated to liquidate other people b
 
 With this list of potential vulnerabilities, you can use this as a base to find even more exploits that can happen with liquidations but this will be good to get you warmed up for assumption analysis.
 
-# 5 DELETING A MAPPING IN A STRUCT EXPLOIT
-
-This is just a quick note about trying to delete a mapping from a struct. If you ever see any code that attempts to delete a map in a struct , it wont work. The value in the mapping will still be there so keep that in mind.
 
 # 6 UTILIZATION RATE IN DEFI PROTOCOLS
 
