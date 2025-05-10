@@ -74,7 +74,7 @@ Velvet use abi.decode in their VelvetSafeModule which triggered me to have a loo
 
 So you already know protocols with liquidation logic or any other logic where they ideally dont want the logic to revert under any other circumstances so they use try/catch blocks which i have already covered how to also exploit in a situation where the information in that try/catch block is necessary protocol logic
 
-Anyway, lets look at how we can use abi.decode.To understand this, we first have to look at hoe solidity handles custom errors:
+Anyway, lets look at how we can use abi.decode.To understand this, we first have to look at how solidity handles custom errors:
 
 Solidity has released a blog post detailing how to efficiently revert with a custom reason. The blog post includes an example assembly block that can be used to return a custom error message:
 
@@ -142,26 +142,26 @@ contract SimpleBank {
 }
 ```
 
-In the withdraw function, if that revert ever hits, this is what solidity does in the EVM. It pushes the length of the payload (all data related to the error message) to the stack and then it pushes the selector of Error(string) which we are talking about in this point and that selector is 0x08c379a0. It adds it as 32 bytes so appends a bunch of 0's at the end. So now you know that if you ever see 0x08c379a0 in any data, you know that it is an error. Then solidity pushes an offset to the string, the length of the string and then the actual string which in this example would be the string "InsufficientBalance". All of this will be explained in more detail below so continue reading.
+In the withdraw function, if that revert ever hits, this is what solidity does in the EVM. It pushes the length of the payload (all data related to the error message) to the stack and then it pushes the selector of Error(string) which we are talking about in this point and that selector is 0x08c379a0. It adds it as 32 bytes so appends a bunch of 0's at the end. So now you know that if you ever see 0x08c379a0 in any data, you know that it is an error. Then solidity pushes an offset to the length of the string, the length of the string and then the actual string which in this example would be the string "InsufficientBalance". All of this will be explained in more detail below so continue reading.
 
 mstore(add(free_mem_ptr, 4), 32)
 🔹 Stores 32 (offset) at free_mem_ptr + 4. So this opcode is simply adding 4 bytes to 0x80 and storing the decimals value of 32 there. As we have learnt from the assembly course, each memory slot is 32 bytes but we are writing to 0x84 which is only 4 bytes after 0x80 so you might be thinking, arent we overwriting the 0x80 slot and the answer is yes we are. The idea is that we want to form all the data that forms the error message and this data contains the following:
 
 - Error(string) selector
-- Offset that tells solidity where string is (will explain more below)
+- Offset that tells solidity where the length of the string is (will explain more below)
 - Length of string
 - actual string
 
 These 4 things come together to form the data we want to send that produces the custom errors you see in solidity. So as we know, forming data in bytes is just getting all this information in bytes and concatenating it. This is how calldata is formed as you know.
 
-So far in memory, we only have the selector padded with a bunch of zeros after the 4th byte so we want to add the next bit of info into memory which is adding 32. So why do we add this 32, if you look at the list of info we need to add to this custom error, we add the offset and all this does is tells solidity how many bytes to skip to get the actual string we want to return. We want to skip 32 bytes because the next bit of info is the length of the string which is going to take 32 byes, we need to tell solidity to skip these 32 bytes and go to the next 32 bytes to get the actual string.
+So far in memory, we only have the selector padded with a bunch of zeros after the 4th byte so we want to add the next bit of info into memory which is adding 32. So why do we add this 32, if you look at the list of info we need to add to this custom error, we add the offset and all this does is tells solidity how many bytes to skip AFTER the selector to get to the length of the string we want to return. So the way the offset works is that it tells the EVM where the start of the length of the string is in the calldata. The offset doesnt count the selector as part of the calldata so the offset is saying after the selector, how many bytes after that is the length of the dynamic data type which in this case is the string. 
 
 mstore(add(free_mem_ptr, 36), 12)
 🔹 Stores 12, which is the length of the error message "Unauthorized".
 🔹 36 = 4 (selector) + 32 (offset to string length), so we are now at the correct location for storing the length.
 
 mstore(add(free_mem_ptr, 68), "Unauthorized")
-🔹 Stores the string "Unauthorized" at free_mem_ptr + 68 which as I said above, this string at 0x80+0x3c(68in decimals) is 32 bytes after the offset we stored. So the 32 bytes after the offset contains the length of the string but after that, is the actual string and that is what the offset is telling solidity by storing 32.
+🔹 Stores the string "Unauthorized" at free_mem_ptr + 68 which as I said above, this string at 0x80+0x3c(68 in decimals) is 32 bytes after the offset we stored. So the 32 bytes after the offset contains the length of the string but after that, is the actual string.
 
 Lets talk about that add opcode for a bit. you know what the add opcode does already. it adds 2 values together and then we use MSTORE to say go to that offset (location in memory) and store "Unauthorized".
 
@@ -204,9 +204,9 @@ result := add(result, 0x04)
 }
 revert(abi.decode(result, (string)));
 }
-In the code snippet above, the data returned by the low-level call is pointed to in “results” and the code adds 4 bytes to the offset of the results pointer.
+In the code snippet above, the data returned by the low-level call is pointed to in “result” and the code adds 4 bytes to the offset of the results pointer.
 
-This step is necessary to align the data so abi.decode will be able to decode the revert reason string and ignore the 4 bytes selector “0x08c379a0” which is the selector for “Error(string)”.
+This step is necessary to align the data so abi.decode will be able to decode the revert reason string and ignore the 4 bytes selector “0x08c379a0” which is the selector for “Error(string)”. So when decoding, a result, that result contains the selector, so in order to properly decode, we want to skip the selector so we have just the offset, the length and then the actual string so the decoding can work properly.
 
 This looks pretty ok so far and will actually work perfectly for abi.decode but lets look where the problem is. In a low level call, we already know that the bool and bytes memory are returned but what you didnt know is that the data returned in the bytes memory data type is padded with the length of the data. Let me explain what this means. So before the shift the result memory pointer by 4 bytes, this is what it looked like :
 
@@ -218,7 +218,7 @@ This looks pretty ok so far and will actually work perfectly for abi.decode but 
 [4] 0000000000000000000000000000000000000000000000000000000000000000
 ```
 
-So like i said above, whenever a variable is declared with bytes memory, the data that is returned is padded with 32 bytes containing the length of the data which is in dex 0 as 0x64 which is 100 in decimals which is correct as we know that the byte length is 100 bytes and then rest of it is the actual data returned which we went over above. As we know, each index is 32 bytes which is why the data is formatted like that.
+So like i said above, whenever a variable is declared with bytes memory, the data that is returned is padded with 32 bytes containing the length of the data which is index 0 as 0x64 which is 100 in decimals which is correct as the byte length of the whole result is 100 bytes long. As we know, each index is 32 bytes which is why the data is formatted like that.
 in index 1, there are 32 bytes and these bytes contain the selector of Error(string) which is 4 bytes and the 32 bytes containing the offset which is 32 (20 in hex). So those 36 bytes are as we expect. This is then followed by the length of the string and then the actual string which is stuff we already know.
 
 What happens after we do result := add(result, 0x04) ?
@@ -234,7 +234,7 @@ WE already know that this sets the free memory pointer to 4 bytes ahead. so when
 
 ```
 
-So now, what happens is that we are reading 4 bytes ahead of the memory location we were reading from which removed a bunch of zeros but completely messes up the format of the result. Let me explain why protocols do this in the first place. The reason is that when passing data to abi.decode, solidity reads index 1 and is expecting it to say where the offset of the string is. So how many bytes it has to skip to get to the string. In the last result memory pointer, in index 1, there was the function selector which wont work with abi.decode. So what protocols do is to point to 4 bytes ahead which moves the selector into index 0 and leaves the offset in index 1 which is correct but what they ignore is that the first 32 bytes that represents the length of the data is now 0x6408c379a0 (429643757984 in decimals) which is incorrect and an incredibly large number. So if any calls after depend on the data in index 0, they are fucked because this returns an absurdly large number.
+So now, what happens is that we are reading 4 bytes ahead of the memory location we were reading from which removed a bunch of zeros but completely messes up the format of the result. Let me explain why protocols do this in the first place. The reason is that when passing data to abi.decode, solidity reads index 1 and is expecting it to say where the offset of the string is. So how many bytes it has to skip from the start of index 1 to get to the start of the length of the string which is in index 2. In the last result memory pointer, in index 1, there was the function selector which wont work with abi.decode. So what protocols do is to point to 4 bytes ahead which moves the selector into index 0 and leaves the offset in index 1 which is correct but what they ignore is that the first 32 bytes that represents the length of the data is now 0x6408c379a0 (429643757984 in decimals) which is incorrect and an incredibly large number. So if any calls after depend on the data in index 0, they are fucked because this returns an absurdly large number.
 
 This is just one of the issues and highlights why you have to be EXTREMELY careful when using memory pointers. Lets dive into the big issue though. Remember we are trying to get a function in a protocol that 'handles' errors in try catch blocks.
 
@@ -301,9 +301,9 @@ According to the assembly, the three revert paths revert when:
 - Offset to the payload is larger then 0xffffffffffffffff which is the end of. the memory stack of the evm (uint64).
 - Offset to the payload is larger then the encoded data length + 0x1f.
 
-So the article took that simplifies contract that tested abi.decode and looked at the bytecode and looked at every way that a revert could occur. Using rattle makes this job a whole lot easier than we would using evm.codes playground or the foundry debugger. Rattle will show you all of the attack paths. Do this yourself to see that what they are saying is true.
+So the article took that simplified contract that tested abi.decode and looked at the bytecode and looked at every way that a revert could occur. Using rattle makes this job a whole lot easier than we would using evm.codes playground or the foundry debugger. Rattle will show you all of the attack paths. I did this myself in the assembly and fv course notes so go check that out.
 
-Where it says offset to payload is pretty much the offset we entered that points solidity to the string we stored after the string length.
+Where it says offset to payload is pretty much the offset we entered that points solidity to the length of the string.
 
 A malicious actor can store any value that meets one of three reverts path in the return data to make abi.decode revert.
 
@@ -318,7 +318,7 @@ revert(free_mem_ptr, 100)
 
 So I am sure you understand how the revert occurs here. If we used the same vulnerable contract i pasted earlier
 
-```
+```solidity
 contract Protocol {
     event CallbackFailed(string reason);
 
@@ -358,11 +358,11 @@ if (reasonBytes.length < 68) revert();
 
 First thing to note is that reasonBytes.length is really just the first 32 bytes of the bytes memory variable because if you remember, we said that using bytes memory returns the data left padded with the data length as we showed earlier.
 
-So they check for the first possible error that could cause an internal revert which is if the data is less than a certain length and it is 68 because we know that at 68 bytes is where the actual error string starts from so if the data length is less than 68 bytes, then we then it could mean a bunch of things but one is that whatever data was sent specified that the memory offset (at index 1) that points solidity to the string was less than 32 bytes. The reason for this check was as said above, one of the ways internal reverts can occur in abi.decode is if the offset is less than 32 bytes so the protocol actually handle this error by checking that and reverting if that was the case. By doing this, the whole function won't revert because it is caught inside the try/catch block so the rest of the code after the revert can still run.
+So they check for the first possible error that could cause an internal revert which is if the data is less than a certain length and it is 68 because we know that at 68 bytes is where the actual error string starts from so if the data length is less than 68 bytes, then it could mean a bunch of things but one is that whatever data was sent specified that the memory offset (at index 1) that points solidity to the length of string was less than 32 bytes. The reason for this check was as said above, one of the ways internal reverts can occur in abi.decode is if the offset is less than 32 bytes so the protocol actually handle this error by checking that and reverting if that was the case. By doing this, the whole function won't revert because it is caught inside the try/catch block so the rest of the code after the revert can still run.
 
 This is also useful for any other solidity function, you can go and read the opcodes easily using evm.codes or rattle and see the flow of where you can make things happen behind the scenes.
 
-Now that we’ve seen how to make abi.decode revert, let’s see how a malicious actor could exploit abi.decode to drain funds from protocol relayers or keepers by creating a gas bomb.
+Now that we’ve seen how to make abi.decode revert, let’s see how a malicious actor could exploit abi.decode to drain funds from protocol relayers or keepers by creating a gas bomb which is simply where we cause the relayer to spend unlimited gas when calling a function.
 
 As we learned earlier, shifting the return data by 4 bytes creates a large length for the encoded data. Therefore an attacker can craft the payload offset to be just under the size of the encoded data to waste gas but not make abi.decode revert.
 
@@ -384,6 +384,7 @@ revert(free_mem_ptr, 100)
 Alternatively, if the malicious actor is attempting to drain the transaction gas and NOT cause an “out of gas” revert, they can calculate a dynamic offset based on the remaining gas (using the gasleft() function) in order to waste almost all the gas without causing a revert.
 
 I havent covered this last part in detail but you should go find out what memory expansion is using the link and see the inner workings of this second part.
+
 
 # 3 EIP-2612 PERMIT FUNCTION, WETH PERMIT EXPLOIT
 
