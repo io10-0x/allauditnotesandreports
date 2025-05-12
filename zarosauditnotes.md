@@ -229,55 +229,6 @@ With this, now you understand most of what there is to know about ERC-7201 so wh
 
 We have covered universally upgradeable smart contracts in your foundry web3 dev notes so have a look there at how it works but if you want to read the official EIP, this is the link https://eips.ethereum.org/EIPS/eip-1822 . We never looked at the official EIP in the course so i didnt know it was 1822 but for your own reading, you can check this out in your own time. For now, we already know what this does so no need to go into it again.
 
-# 3 EIP-2535 Diamond Standard Multi Faceted Proxy
-
-This standard was briefly spoken about in the foundry web3 course but we are going to study the EIP now to understand exactly what a diamond proxy is and how to use it. I will be using 2 links to discuss how diamond standard proxies work. See below:
-https://eips.ethereum.org/EIPS/eip-2535
-https://www.quicknode.com/guides/ethereum-development/smart-contracts/the-diamond-standard-eip-2535-explained-part-1
-https://www.quicknode.com/guides/ethereum-development/smart-contracts/the-diamond-standard-eip-2535-explained-part-2
-
-Essentially, a diamond proxy is a single proxy that points to multiple implementation contracts. these implementation contracts are known as facets. Dont worry about the naming convention. it isnt that relevant in this case. These facets are connected to libraries that define the namespace for that contract in the proxy contract as you will see in the example below.
-
-The Diamond Standard is an improvement over EIP-1538. It has the same idea: To map single functions for a delegatecall to addresses, instead of proxying a whole contract through.The important part of the Diamond Standard is the way storage works. Unlike the unstructured storage pattern that OpenZeppelin uses, the Diamond Storage is putting a single struct to a specific storage slot.Function wise it looks like this, given from the EIP Page:
-
-```solidity
-// A contract that implements diamond storage.
-library LibA {
-
-  // This struct contains state variables we care about.
-  struct DiamondStorage {
-    address owner;
-    bytes32 dataA;
-  }
-
-  // Returns the struct from a specified position in contract storage
-  // ds is short for DiamondStorage
-  function diamondStorage() internal pure returns(DiamondStorage storage ds) {
-    // Specifies a random position from a hash of a string
-    bytes32 storagePosition = keccak256("diamond.storage.LibA")
-    // Set the position of our struct in contract storage
-    assembly {ds.slot := storagePosition}
-  }
-}
-
-// Our facet uses the diamond storage defined above.
-contract FacetA {
-
-  function setDataA(bytes32 _dataA) external {
-    LibA.DiamondStorage storage ds = LibA.diamondStorage();
-    require(ds.owner == msg.sender, "Must be owner.");
-    ds.dataA = _dataA
-  }
-
-  function getDataA() external view returns (bytes32) {
-    return LibDiamond.diamondStorage().dataA
-  }
-}
-```
-
-Having this, you can have as many LibXYZ and FacetXYZ as you want, they are always in a separate storage slot as a whole, because of the whole struct. To completely understand it, this is stored in the Proxy contract that does the delegatecall, not in the Faucet itself. That's why you can share storage across other faucets. Every storage slot is defined manually (keccak256("diamond.storage.LibXYZ")).As you can see, everything we learnt from ERC-7201 becomes very useful here. The same way the namespace was used in the struct is the same way it is used in the library to create the namespace for facetA. so when the diamond contract sets facet A as one of its implementation addresses, all variables that are relevant to facet A will have their specific storage slots in the diamond proxy contract which prevents the storage collision problem. This allows us to have as many implementation contracts (facets) as we want and we can upgrade any of them at any time we want. The best way to visualize this would be to look at some code that implements the diamond proxy and there is no better way to do this than from the person who made the standard. The main code is at https://github.com/mudgen/diamond-1-hardhat/tree/main . I have cloned this repo in the securityresearchcyfrin directory under diamond-1-hardhat and performed assumption analysis on every line of code to really drill down how this process works and also how to deploy, etc. This will be the complete guide on how to use diamond proxies but in terms of notes, there are no new concepts here that we dont know about so all you need to do is go over to that file and understand how it all meshes together.
-
-The explantion i gave here and in the above links are quite straightforward but in the directory as you will see, it is a lot more complicated than I have explained it here. The idea is still the same but it just takes a lot of steps to implement which is why a lot of people dont like the diamond standard and have come up with other solutions like the one below and the tree proxy format used by zaros.
 
 # 4 EIP-7504 Improvement Proposal for Diamond Proxies
 
