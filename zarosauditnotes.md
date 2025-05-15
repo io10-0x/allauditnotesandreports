@@ -12,7 +12,7 @@ The first point I want to explain is where the article says "The optimal solutio
 At this moment, I dont know too much about storage locations as I am yet to take the assembly course but looking into this will give me the background I need before taking the course. What this means though is that as you know, solidity assigns storage slots to variables sequentially for scalar data types like uint256, address and bool. The article covers this and your notes also cover this but doesnt cover it like we are about to cover it. This is the formula that solidity uses to determine storage slots for all data types.
 
 ```
-Lroot :=root|Lroot + n|keccak256(Lroot)|keccak256(h(k) ⊕ Lroot)
+Lroot :=root|Lroot + n|keccak256(Lroot)|keccak256(k, Lroot)
 ```
 
 The storage layout formula is as follows:
@@ -37,95 +37,38 @@ Dynamic data types can grow or shrink in size, unlike fixed-size variables such 
 
 The reason we use keccak256 for dynamic data types is because even if another array is stored after the first array, keccak256(3) will be a completely different storage slot to keccak256(2) so its not like they will be remotely close to each other. They are not sequential when using keccak256 to hash them so there is very little risk of overlap.
 
-keccak256(h(k) ⊕ Lroot)
+We will adapt the earlier example slightly to explain mappings:
+
+For example:
+uint256 a → Slot 0
+uint256 b → Slot 1
+mapping c → Slot 2
+
+Mappings storage slots are derived in a similar manner but the hashing varies slightly. So as usual with dynamic arrays, say we have 2 variables in slots 0 and 1, slot 2 will contain the length of the mapping just like arrays do but determining the storage slot for each key-value pair in the mapping is slightly more challenging because you need to make sure that there are no storage collisions and what I mean is that we need to make sure 2 different mapping keys are not stored in the same storage position. So we cannot do what we did with arrays by adding each extra element in the array to keccak256(base slot+1) storage slot because unlike arrays, mappings have no order or indexing. So the formual we use to derive storage slots for mapping keys is:
+
+keccak256(k,Lroot)
 Where:
 
-- **`slot`**: The calculated storage slot for the key-value pair in the mapping.
-- **`h(k)`**: The hash of the key (`k`) in the mapping, usually calculated with `keccak256`.
-- **`⊕` (XOR)**: The bitwise XOR operation.
+- **k**:  the key (`k`) in the mapping
 - **`Lroot`**: The base storage slot of the mapping, assigned during contract compilation.
 
-Mappings have a slightly different formula as they use the bitwise XOR operator. The circle plus (⊕) symbol in the formula represents the bitwise XOR operation, used to uniquely combine the key (h(k)) and the base slot (Lroot) for mappings in Solidity. So as usual with dynamic arrays, say we have 2 variables in slots 0 and 1, slot 2 will contain the length of the mapping just like arrays do but determining the storage slot for each key-value pair in the mapping is slightly more challenging because you need to make sure that there are no storage collisions and what I mean is that we need to make sure 2 different mapping keys are not stored in the same storage position. So we cannot do what we did with arrays by adding each extra element in the array to keccak256(base slot+1) storage slot because unlike arrays, mappings have no order or indexing. So to assign each mapping key to a storage slot. this is what the bitwise XOR operation helps us do.
-
-XOR (Exclusive OR) Operation
-
-XOR Truth Table (Per Bit)
-
-| Input A | Input B | Output (A ⊕ B) |
-| ------- | ------- | -------------- |
-| 0       | 0       | 0              |
-| 0       | 1       | 1              |
-| 1       | 0       | 1              |
-| 1       | 1       | 0              |
-
-How XOR Works for Larger Numbers
-
-The XOR operation is applied **bitwise** to binary representations of the operands. Each bit is XORed independently using the truth table above.
-
-Example: XOR Two Numbers
-Let’s XOR `5` (binary `0101`) and `3` (binary `0011`):
-
-| Bit Position | A (5 in binary) | B (3 in binary) | A ⊕ B |
-| ------------ | --------------- | --------------- | ----- |
-| 3            | 0               | 0               | 0     |
-| 2            | 1               | 0               | 1     |
-| 1            | 0               | 1               | 1     |
-| 0            | 1               | 1               | 0     |
-
-Result in binary: `0110` (which is `6` in decimal).
-
----
-
-Solidity Storage Layout for Mappings
-
-Formula Breakdown
-
-The formula for calculating storage slots ensures that each key-value pair in a mapping is stored at a unique location. See example below:
-
-1. **Base Slot (`Lroot`)**:
-
-   - This is the fixed storage slot for the mapping itself, assigned during compilation.
-   - It does not change regardless of how many keys are added to the mapping.
-
-2. **Key Hash (`h(k)`)**:
-
-   - The key is hashed using `keccak256` to generate a deterministic value.
-
-3. **XOR Operation (`⊕`)**:
-
-   - Combines the key hash (`h(k)`) with the base slot (`Lroot`) to ensure uniqueness.
-
-4. **Final Slot Calculation (`keccak256`)**:
-   - The result of the XOR operation is hashed using `keccak256` to compute the final storage slot for the key-value pair.
-
----
-
-Example in Solidity
-
-Contract Example:
+To see how mappings storage slots are derived based on the above formula, lets take the following minimal contract:
 
 ```solidity
-contract Example {
-    mapping(address => uint256) public balances;
-    mapping(uint256 => string) public data;
+contract Owner {
+   uint256 public number1;
+   uint256 public number2;
+   mapping(uint256 => bool) public testMap;
+
+   function updateMap(uint256 key1) external {
+
+    testMap[key1] = true;
+   }
+
 }
 ```
 
-Base Slots (Lroot):
-
-balances is assigned Lroot = 0.
-data is assigned Lroot = 1.
-
-Key-Value Pair Slots:
-
-For balances[0x123...], the storage slot is calculated as:
-keccak256(h(0x123...) ⊕ 0) which means both the key and the base slot are converted to binary and assessed using the truth table to generate a new binary from the combination of the key hash binary and the binary of the base storage slot. This binary is then hashed using keccak256 to give a unique storage slot for every key and base slot that cannot be overlapped to cause storage collision.
-
-For data[42], the storage slot is calculated as:
-keccak256(h(42) ⊕ 1)
-
-Dynamic Slot Calculation:
-Each key in the mapping has its own unique storage slot calculated using the formula. This isnt always the case with mappings though. There is a slight difference when mappings are inside structs which we will look at shortly.
+Take this contract to remix, compile it, copy its bytecode and then take off the contract creation code and keep the runtime code. Take that runtime code to the evm.codes playground and as calldata, enter 0x0c43c56b000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000 which is the calldata for updateMap(2). In the EVM, when you do this, what you will see is that to get the storage slot for testMap, what happens in the EVM is that key1 (k) which in this case is 2, is stored at offset 0 in memory from our call data. Then at 0x20 offset in memory, the EVM stores 2 again but the 2 this time represents the base storage slot (Lroot) for testMap. Then from offset 0 to offset 0x40 in memory which contains both 2's we just stored are hashed in a single keccak256 opcode. So KECCAK256(22) is essentially what is called. This is consistent with our formula and this is how the storage slots for mapping keys are derived. Make sure you go through this in the playground yourself to see it happen in real time.
 
 Now we understand how storage slots are assigned in solidity, lets get back to the namespaces idea. To avoid storage collisions, what we need is a way to give a namespace to different variables in a particular contract. What i mean is that we need a way to say that uint256 public number variable in a particular contract must go in storage slot 0 unless we overwrite this. This is how namespaces work. You assign a slot to a particular variable that you name. This cannot happen in solidity as mentioned earlier but there are ways around this using structs which is what we are about to have a look at.
 
