@@ -2270,6 +2270,72 @@ https://cantina.xyz/code/8cf9c7a0-a7a6-446a-8577-1e2c254eb5a8/findings?status=ne
 
 So as you can see, if a call is meant to be a static call and not alter state and somehow manages to do that, it should revert but since it is in a try/catch block as we see above, it doesn't, the function will consume all of the gas left for the function leading to an out of gas error but due to the 63/64 gas rule, there will still be some gas left to carry out the rest of the function depending on how much gas it costs, if the rest of the function costs a lot more, then the whole function will revert once it runs out of gas so this is something you have to keep in mind. 
 
+# 29 BLOCK.TIMESTAMP IS ONLY RECOGNIZED AT RUNTIME 
+
+Summary
+The UniswapHandler and PancakeSwapHandler contracts use block.timestamp + 15 as the deadline parameter when interacting with Uniswap V3's router, which provides no meaningful protection against pending transactions being executed at unfavourable times.
+
+Finding Description
+Both swap handler contracts implement functions to interact with Uniswap V3's router for token swaps. The issue stems from how the deadline parameter is set in these functions:
+
+// In UniswapHandler.sol and PancakeSwapHandler.sol
+deadline: block.timestamp + 15
+The deadline parameter is meant to protect users by ensuring their transactions are executed within a reasonable time window. However, using block.timestamp + 15 seconds is problematic because:
+
+block.timestamp represents the current block's timestamp when the transaction is mined
+The deadline check in Uniswap's router compares this timestamp against the current block timestamp
+Since both values will be the same when the transaction executes, the deadline check becomes ineffective. Let me explain what this means. In the uniswap handler, , when a function is called, the deadline is set to block.timestamp + 15. The problem with that is that block.timestamp is only calculated when the tx is mined so if the time right now is 10 and i set deadline at block.timestamp + 15, what you might think is that I am setting the deadline to 25 so if the tx doesnt run by 25, then it should revert.
+
+This would be incorrect becasue what would end up happening is that I submit the tx and say by the time it is mined after it is taken from the mempool and all, that is when runtime occurs and block.timestamp is calculated from that point as 30. This means deadline will be 45 instead of the 25 we expected. So the transaction will go through as block.timestamp < deadline but that was not the intended functionality. This is a very sneaky vulnerability that is easy to miss.
+
+A transaction that provides insufficient gas or gets stuck in the mempool could be picked up by malicious actors or MEV bots and executed at a later time when market conditions are unfavourable to the user.
+
+# 30 PAUSE FUNCTIONALITY MUST ALWAYS ALLOW WITHDRAWALS AND LIQUIDATION PREVENTION 
+
+Read the finding below as it will explain everything about this vulnerability. In summary, you need to make sure that whenever a protocol is paused or emergency paused, it must allow all withdrawals and also any logic to prevent userd from getting liquidated during the pause. See below:
+
+Description
+The Velvet protocol contains an issue in its pause mechanism design that prevents users from protecting their positions during emergency situations. When the protocol is paused via setProtocolPause(true), all debt repayment functions become inaccessible due to the protocolNotPaused modifier, while positions remain vulnerable to liquidation on external lending platforms like Aave and Venus.
+
+The core issue exists in the Rebalancing contract where both repayment functions implement the protocolNotPaused modifier:
+
+```solidity
+function repay(
+  address _controller,
+  FunctionParameters.RepayParams calldata repayData
+) external onlyAssetManager nonReentrant protocolNotPaused {
+  // Repayment logic...
+}
+
+function directDebtRepayment(
+  address _debtToken,
+  address _repayAddress, 
+  uint256 _repayAmount
+) external onlyAssetManager nonReentrant protocolNotPaused {
+  // Direct repayment logic...
+}
+```
+
+The issue is that while Velvet's protocol functions are blocked during a pause, external lending platforms (Aave and Venus) continue their normal operations, including health factor monitoring and liquidation processes. Users who have open positions with decreasing collateral values cannot protect themselves by repaying debt or adjusting positions due to the pause, yet those positions remain fully exposed to external liquidation mechanisms.
+
+This creates a significant asymmetry where protective actions are blocked while punitive ones remain active. The current design fails to consider that the lending protocols Velvet integrates with operate independently and will continue executing liquidations regardless of Velvet's operational status. This is especially dangerous during market volatility when protocol pauses are most likely to be activated, leaving users defenseless precisely when they most need to take protective action.
+
+Users may suffer unavoidable liquidations during protocol pauses, resulting in significant financial losses that could have been prevented if repayment functions remained accessible or if liquidations were also suspended during protocol pauses.
+
+Velvet’s pause stops only internal calls guarded by protocolNotPaused. External protocols such as Aave and Venus remain fully live; their liquidators will continue to monitor health factors and seize collateral the moment it falls below 1.0. Because repay() and directDebtRepayment() are also blocked, asset managers lose the only mechanism they have to push the health factor back up. The result is not “consistent system state” but an inconsistent risk surface: punishment is allowed, protection is not.
+
+Large lending markets solved this exact problem long time ago:
+
+Compound – the Pause Guardian may disable Mint, Borrow, Transfer, Liquidate but can never block Redeem or RepayBorrow.
+
+Aave – emergency “freeze” is deliberately scoped to stop new borrows but keep withdrawals and repayments enabled.
+
+Gauntlet’s cross‑protocol survey summarises the norm: Pause Guardians “cannot disable Redeem or Repay Borrow; emergency actions are meant to let users exit positions.”
+
+These protocols confronted exactly the same consistency concern the sponsor raises and still choose to keep these risk‑reducing functions unpaused; doing otherwise would stop users to do anything during the market shocks.
+
+
+
 
 
 
