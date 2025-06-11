@@ -280,9 +280,7 @@ function test_oraclemanipulationv2() public setAllowedToken hasDeposits {
     }
 ```
 
-There have been so many oracle manipulation exploits that have happened and one of these can be seen here https://rekt.news/cream-rekt-2/. I want to go through exactly what happened so i will do this at a later date but the idea is extremely similar to what I have just shown above where a flash loan was taken and a bunch of things were done with the flash loan to rekt a protocol based on a faulty oracle and then pay back the flash loan. My example was not profitable but this one sure was so we are going to go over exactly how this happened.
-
-WHEN YOU MAKE NOTES ON ORACLE MANIPULATION, USE ALL THE MORE COMPLEX EXAMPLES FROM OWEN THURAM AS WELL AS THE EXPLAINER GIVEN BY PATRICK
+There have been so many oracle manipulation exploits that have happened and one of these can be seen here https://rekt.news/cream-rekt-2/. I will be going through one such exploit in the AmmalgamPrep.md file which was the CREAM finance 2021 hack but the idea is extremely similar to what I have just shown above where a flash loan was taken and a bunch of things were done with the flash loan to rekt a protocol based on a faulty oracle or market manipulation and then pay back the flash loan. My example was not profitable but this one sure was so we are going to go over exactly how this happened.
 
 # 6 EASY MEDIUM FINDING IN PROTOCOLS USING CHAINLINK PRICE ORACLES
 
