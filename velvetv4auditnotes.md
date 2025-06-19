@@ -76,7 +76,7 @@ So you already know protocols with liquidation logic or any other logic where th
 
 Anyway, lets look at how we can use abi.decode.To understand this, we first have to look at how solidity handles custom errors:
 
-Solidity has released a blog post detailing how to efficiently revert with a custom reason. The blog post includes an example assembly block that can be used to return a custom error message:
+Solidity has released a blog post detailing how to efficiently revert with a custom string reason. The blog post includes an example assembly block that can be used to return a custom error message:
 
 ```
 let free_mem_ptr := mload(64)
@@ -102,7 +102,7 @@ let free_mem_ptr := mload(64)
 
 mstore(free_mem_ptr, 0x08c379a000000000000000000000000000000000000000000000000000000000)
 🔹 Stores the error function selector (0x08c379a0) at free_mem_ptr.
-🔹 0x08c379a0 is the 4-byte function selector of Error(string), which is the standard way Solidity returns string-based errors. So when trying to store custom errors in solidity, we need to fist store the selector of Error(string) in memory. This is just how solidity works and 0x08c379a0. We already know how selectors work but see below for a recap if you forgot.
+🔹 0x08c379a0 is the 4-byte function selector of Error(string), which is the standard way Solidity returns string-based errors. By string based errors, what this means is say you have a line: require(1==2, "Error Message"); in solidity, when the require statement fails, the "Error message" string is supposed to be displayed so the way it is displayed is by using the assembly above. So when trying to store custom string errors in solidity, we need to fist store the selector of Error(string) in memory. This is just how solidity works and 0x08c379a0. We already know how selectors work but see below for a recap if you forgot.
 
 keccak256("Error(string)")[:4] == 0x08c379a0
 This is the function signature Solidity uses for string-based reverts.
@@ -128,7 +128,7 @@ contract SimpleBank {
 
   function withdraw(uint256 amount) external {
     if (amount > balances[msg.sender]) {
-      revert InsufficientBalance(balances[msg.sender], amount);
+      require(1==2, "Unauthorized");
     }
 
     balances[msg.sender] -= amount;
@@ -142,7 +142,7 @@ contract SimpleBank {
 }
 ```
 
-In the withdraw function, if that revert ever hits, this is what solidity does in the EVM. It pushes the length of the payload (all data related to the error message) to the stack and then it pushes the selector of Error(string) which we are talking about in this point and that selector is 0x08c379a0. It adds it as 32 bytes so appends a bunch of 0's at the end. So now you know that if you ever see 0x08c379a0 in any data, you know that it is an error. Then solidity pushes an offset to the length of the string, the length of the string and then the actual string which in this example would be the string "InsufficientBalance". All of this will be explained in more detail below so continue reading.
+In the withdraw function, if that revert ever hits, this is what solidity does in the EVM. It pushes the selector of Error(string) which we are talking about in this point and that selector is 0x08c379a0. It adds it as 32 bytes so appends a bunch of 0's at the end. So now you know that if you ever see 0x08c379a0 in any data, you know that it is an error string from a require statement. Then solidity pushes an offset to the length of the string, the length of the string and then the actual string which in this example would be the string "Unauthorized". All of this will be explained in more detail below so continue reading.
 
 mstore(add(free_mem_ptr, 4), 32)
 🔹 Stores 32 (offset) at free_mem_ptr + 4. So this opcode is simply adding 4 bytes to 0x80 and storing the decimals value of 32 there. As we have learnt from the assembly course, each memory slot is 32 bytes but we are writing to 0x84 which is only 4 bytes after 0x80 so you might be thinking, arent we overwriting the 0x80 slot and the answer is yes we are. The idea is that we want to form all the data that forms the error message and this data contains the following:
@@ -152,7 +152,7 @@ mstore(add(free_mem_ptr, 4), 32)
 - Length of string
 - actual string
 
-These 4 things come together to form the data we want to send that produces the custom errors you see in solidity. So as we know, forming data in bytes is just getting all this information in bytes and concatenating it. This is how calldata is formed as you know.
+These 4 things come together to form the data we want to send that produces the custom string errors you see in solidity require statements. For actual custom error data types, these are covered in the asseembly course so you can go have a look at that in your oen time. So as we know, forming data in bytes is just getting all this information in bytes and concatenating it. This is how calldata is formed.
 
 So far in memory, we only have the selector padded with a bunch of zeros after the 4th byte so we want to add the next bit of info into memory which is adding 32. So why do we add this 32, if you look at the list of info we need to add to this custom error, we add the offset and all this does is tells solidity how many bytes to skip AFTER the selector to get to the length of the string we want to return. So the way the offset works is that it tells the EVM where the start of the length of the string is in the calldata. The offset doesnt count the selector as part of the calldata so the offset is saying after the selector, how many bytes after that is the length of the dynamic data type which in this case is the string. 
 
