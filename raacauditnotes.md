@@ -20,17 +20,20 @@ The **liquidity index** is a **cumulative multiplier** that represents the growt
 The formula typically used to calculate liquidity index was used in RAAC in the ReserveLibrary.sol contract and I will display it wit the comments I left on it so you can see how it works:
 
 ```solidity
-   function calculateLinearInterest(
+  function calculateLinearInterest(
         uint256 rate,
         uint256 timeDelta,
         uint256 lastIndex
     ) internal pure returns (uint256) {
-        uint256 cumulatedInterest = rate * timeDelta;
-        //c so the interest rate(IN RAY) is multiplied by how much time has passed since the last update to get how much interest has been accumulated. so this value is the interest rate per second. Lets see an example to drill this home. so if interest rate is 20%, this will be 20% of 1e27 which is 5e25. So assume timedelta is is 100 seconds, then the interest accumulated will be 5e25 * 100 = 5e27. so total interest per second is 5e27 or 5% (5e27/1e27).
+        uint256 cumulatedInterest = rate * timeDelta; 
         cumulatedInterest = cumulatedInterest / SECONDS_PER_YEAR;
-        //c then the interest rate per second is divided by the number of seconds in a year to get the interest rate per year. continuing from the above example, 5e27/31536000 = 1.58e21 or 0.00000158% annual interest rate
+        //c let me explain what the above 2 lines are trying to do. The aim is to calculate the interest rate over a certain amount of time that has passed. Think of this formula as rate/SECONDS_PER_YEAR * timeDelta. We know time delta is going to be in seconds and rate is the annual interest rate. By dividing the annual rate by the amount of seconds in a year, what this gives is the interest rate per second. Multiplying the interest rate per second by the amount of seconds that have passed will give us the amount of interest that cumulated in time delta. 
         return WadRayMath.RAY + cumulatedInterest;
-        //c then the interest rate per year is added to 1e27 to make the cummulative interest have ray precision. continuing from the above example, 1e27 + 1.58e21 = 1.00000158e27 which is still 0.00000158% when you divide by 1e27 which is what happens in calculateliquidityindex function where rayMul is called. This will be the new cummulated interest from this update. To get the new liquidity index, this value will be multiplied by the old liquidity index. This is because the liquidity index is a cummulative value so it is the old value * the new interest rate.
+        /*c then the amount of interest that cumulated in time delta is added to 1e27 to make the cummulative interest have ray precision. For example, say rate = 0.2e27 (20% in ray) and timedelta is 100, if you do rate/SECONDS_PER_YEAR * timeDelta, the cumulatedInterest will be 3.171e21
+        
+        1e27 + 3.171e21 = 1.00003171e27. So what we have now will be the liquidity index for the last time delta seconds.
+
+        */
     }
 
     function calculateLiquidityIndex(
