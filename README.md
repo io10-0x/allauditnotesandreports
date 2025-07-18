@@ -1,5 +1,117 @@
-Audit Analysis Overview
-# STEP 1 - FIRST PASS AND ASSUMPTION ANALYSIS
+# Audit Analysis Overview
+
+# STEP 1 - FIRST PASS AND ASSUMPTION ANALYSIS (FROM IGNITEBYBENQI AUDIT NOTES)
+In your security notes, I detailed a tincho process and this process, I spoke about going through each line of code to find bugs. The tincho strategy is good but not the most efficient. The method I am about to propose is the best way to find bugs in any protocol. In any protocol you are looking at, keep in mind that the main thing you are supposed to find are high/medium bugs. Finding lows are cool but arent going to get you paid like you want to. 
+
+When you read previous reports, every high/medium finding has one thing in common. They have to do with funds being either mishandled, lost, or being unable to receive. They are all centered around user/protocol funds. This means that your aim should be to focus on all the functions where funds are handled in the contract. For example, deposit, withdraw, liquidate, swap or any functions like this that directly interact with user funds. These are the most important functions in any protocol. These should be your main targets in any protocol. Your job is to find a way to make any of these functions do something that they arent supposed to do. How do you do this?
+
+Well every line of code in a function is based on an assumption. Assumptions are what are used to write any codebase. Every function assumes some things for them to work. These assumptions are where the money is in every contest. Your job is to figure out what is assumed in each line you are looking at and then make sure that assumption is correct. This is how you will find the important bugs. By testing these assumptions, it will lead you to check more functions in the contract and each line in these functions have their own assumptions which you will need to test.
+
+So you start from a function and test the assumptions for a particular line and to test the assumption is correct, you will have to look at another function that the line is calling and that function will have its own assumptions you will also have to confirm and this way, you expand from one functions to other important functions in the contract or any other external calls made.
+
+I will show you a short example of how this works but if you look at the registernode function in the staking.sol, you will see how I did this fully.
+
+```solidity
+ function registerNode(
+        address user,
+        string calldata nodeId,
+        bytes calldata blsProofOfPossession,
+        uint256 index
+    ) external onlyRole(ZEEVE_ADMIN_ROLE) whenNotPaused {
+        //c a1: the msg.sender is the zeeve admin who apparently is the only one allowed to call this function
+        //ca1 comment from dev: The user facing functions are stakeWithAVAX and stakeWithERC20. registerNode is called by Zeeve when the node is provisioned and Ignite can be informed of it.
+
+        require(
+            bytes(nodeId).length > 0 && blsProofOfPossession.length == 144, //c outside of scope. we can assume that the nodeId and the BLS key are valid based on this check
+            "Invalid node or BLS key"
+        );
+        require(
+            igniteContract.registrationIndicesByNodeId(nodeId) == 0, //c a2: this registrationIndicesByNodeId function returning 0 means that the node is not registered yet
+            //qa2: is there a way to make this function return 0 even if the node is already registered ?
+            //ca2 at the moment, since _register is called after every registration and the function is updated, this doesnt seem possible
+            "Node ID already registered"
+        );
+```
+
+So this is a snippet from the registernode function in the staking contract which was one of the most important functions in the contract. I started my assumptions with the first comment which says a1 which means assumption 1. so thinking about this function, what is the first thing i see about line of the function that has been assumed. I would normally start with all assumptions about the address user line. One such assumption would be that the user is always going to be a valid address (non zero). I didnt do this in the above function but this is normally would I would do. a1 wuld check that first line and I would go line by line thinking of as many assumptions as possible that were made in that line.
+
+Take a1 for example, the assumption was that the zeeve admin role was the only one allowed to call registernode. This assumption needs to be tested to make sure it is correct because in reality, why is no other user supposed to call registernode if they want to register a node. To validate this assumption, I had to ask the devs if this was intended and when i got the validation, i added the comment from the dev about it as you see. Another assumption on that line is that the onlyRole modifier will actually restrict anyone else from calling this function.
+This will lead me to look at that modifier and see what is assumed there and see if i can break that. This is what i mean when i say that assumption analysis will amlost never restrict you to that line, you will eventually have to look at other lines in other functions to validate the assumption made on that line.
+
+Lets look at another assumption . a2 looks at the igniteContract.registrationIndicesByNodeId(nodeId) == 0 line and an assumption made on that line is that if registrationIndicesByNodeId function returns 0, it means that the node is not registered yet. This is a HUGE ASSUMPTION to validate becuase it means you have to go into the ignite contract and look at everywhere registrationIndicesByNodeId is used to make sure that there is no point it is set to 0. You also need to check that there is no possible way to set it to 0 for a registered node. I did this and added a comment line under to say the reason why the assumption was valid after my research. This is what you have to do to be thorough about finding high/medium bugs. If you dont do it like this, you will miss things. You can have as many assumptions a line makes as possible. If you look in the staking contract, you will see some lines where I deduced multiple assumptions. Assumption analysis is a very good strategy for you because you are amazing at formulating questions so for each line, you will be able to find deep assumptions quickly an then you can go about validating/invalidating them.
+
+This is how you will become untouchable. Assumption analysis. Every contract you look at must be FULL of lines with assumptions. If not, you are not doing a good job. You need to be able to come up with as many critical assumptions as possible as quickly as possible but the more you do this, the better you will be at it.
+
+Using this assumption analysis not only helps you think about what the protocol's code is doing, but also what they are not doing. Let me explain what this means from the ignite contract. see
+the function below:
+
+```solidity
+function registerWithPrevalidatedQiStake(
+        address beneficiary,
+        string calldata nodeId,
+        bytes calldata blsProofOfPossession,
+        uint validationDuration,
+        uint qiAmount
+    )
+        external
+    //c a1: assumes that the node id and bls proof of possession are valid and unique. this checks out because only the staking contract can call this function
+    //and in the registernode function that calls this function, there are checks that make these assumptions valid. same goes for validation duration
+    //c a2: assumes that qi amount is non zero or dust value. this checks out as long as avaxstakedamount and hosting fee are large enough so we can safely assume this checks out
+    {
+        //bug no nonreentrant modifier here so i can reenter this function but need to figure out how to exploit this. it is a known issue but if i can escalate it, it will be a high severity issue
+        //c I thought this was an issue but the internal _register function contains the whennotpaused modifier which means no one can register when the contract is paused
+        require(
+            hasRole(ROLE_REGISTER_WITH_FLEXIBLE_PRICE_CHECK, msg.sender),
+            "ROLE_REGISTER_WITH_FLEXIBLE_PRICE_CHECK"
+        ); //c a3: assumes hasRole function works as expected and that the role is correctly spelt. this checks out. I have glanced through this in the access contract and
+        //the contract is from openzeppelin so it is safe to assume that it works properly
+
+        (, int256 avaxPrice, , uint avaxPriceUpdatedAt, ) = priceFeeds[AVAX]
+            .latestRoundData(); //c a4: assumes that the chainlink price feeds dont return any other useful information by only selecting 2 variables from it.
+        //this checks out because the other values are roundid, startedat and answeredinround which are not useful in this context
+        (, int256 qiPrice, , uint qiPriceUpdatedAt, ) = priceFeeds[address(qi)]
+            .latestRoundData();
+
+        require(avaxPrice > 0 && qiPrice > 0);
+        require(block.timestamp - avaxPriceUpdatedAt <= maxPriceAges[AVAX]);
+        require(
+            block.timestamp - qiPriceUpdatedAt <= maxPriceAges[address(qi)]
+        );
+        //c a5: assumes that the chainklink oracles will always work.
+        //bugKNOWN a5: if the chainlink oracles are compromised, the contract will not work as intended. this is a known issue so no need to report
+
+        // 200 AVAX + 1 AVAX fee
+        uint expectedQiAmount = (uint(avaxPrice) * 201e18) / uint(qiPrice); //q what is the significance of 201e18 i am guessing users to have a qi stake that is worth at least 201 avax (or 90% of it based on the next line)
+        //c a6: assumes that this formula has no overflow or precision loss and returns the qi amount with correct token decimals. this checks out.
+        //c a7: assumes that the 201 avax minimum requirement is never going to change
+        //bugREPORTED a7 this isnt a correct assumption. if the protocol decide that the 201 avax minimum requirement is too large or too small , they have to upgrade the contract to change it.
+        require(qiAmount >= (expectedQiAmount * 9) / 10); //c this is to make sure that the user has a qi stake that is worth at least 90% of 201 avax. the reason for 90% is because the
+        //"ROLE_REGISTER_WITH_FLEXIBLE_PRICE_CHECK" will be assigned to the staking contract and in the staking.sol contract, this function is called from the registernode function but the prices are checked in the function
+        //and then again in this function so prices could change between when it is calculated in the zeeve contract and when it is calculated in this function so because of this, the protocol dont require qiamount == expectedqiamount.
+        //To account for price changes, the protocol requires that the qi amount is at least 90% of the expected qi amount
+
+        qi.safeTransferFrom(msg.sender, address(this), qiAmount);
+        //c a8: assumes that the safetransferfrom function correctly transfers the qi amount from the staking contract to this contract. this checks out as we can safely assume that the safetransferfrom function that comes from openzeppelin works as expected
+        //c a9: assumes that the qi token is safe in this contract and cannot be drained. NEED TO CHECK FOR ANY BALANCE OF CHECK EXPLOITS I CAN DO
+
+        _registerWithChecks(
+            beneficiary,
+            nodeId,
+            blsProofOfPossession,
+            validationDuration,
+            false,
+            address(qi),
+            qiAmount,
+            true
+        );
+    }
+```
+
+I used assumption analysis to look at this function and i got almost to the end of the function at a9 and i was trying to validate a9 and to do this, I searched up qi to see everywhere that qi was mentioned in the contract and when i looked at the releaselockedtokens function, i saw something interesting which was that for users who registerwithstake got slashed but all users who registerwithprevalidatedqistake do not get slashed. There was no logic to slash bad actors who registerwithprevalidatedqistake. So although this had nothing to do with validating a9, it was a high vulnerability as you can imagine. You can read about this finding in codehawks under your submissions as a high submission. This is just another example of the power of assumption analysis.
+
+For assumption analysis to be effective and for you to be able to formulate the best assumptions for each line you look at, you MUST have at least completed a first pass. What I mean by this is that when you first look at a codebase, your plan should be to pick an entry point. An entry point is simply an interesting function in the codebase. Since we are trying to find bugs that directly affect funds, you will most likely look for functions like deposit/withdraw or something that has to do with funds moving back and forth.
+
+Then you will go through the whole function and make comments on everything you understand about what is happening. Go into every external or internal call that function makes and do the same. Make as many comments as you can. This will help you understand the full flow of a path. You can even uncover bugs during this first pass. It is exactly like assumption analysis but you arent going into what the exact assumptions are and the reason is simply, if you dont fully know everything the function does, how can you know what the assumptions are? Once you have gone through the full flow end to end, then you go through the whole flow again but this time as ususal, in each line perform assumption analysis. You will be unstoppable like this.
 
 # STEP 2 - ZOOM OUT ANALYSIS (FROM VELVET V4 AUDIT NOTES)
 This section will introduce a step further than assumption analysis. So far, we have a first pass and assumption analysis. Now I will be introducing the zoom out methodology which must come immediately after assumption analysis. The fact that you didnt do this, led to missing this bug which was very easily spotted. I will give some background on the bug first before explaining the zoom out methodology:
@@ -94,4 +206,5 @@ With this finding, zoom out methodology would have easily shown you that when a 
 
 Once zoom out analysis is used for a function, the next thing is function state change analysis which is a concept I introduced in RAACV2AuditNotes so check that out.
 
-# STEP 3 - FUNCTION STATE CHANGE ANALYSIS
+# STEP 3 - FUNCTION STATE CHANGE ANALYSIS (FROM RAACV2AUDITNOTES)
+
