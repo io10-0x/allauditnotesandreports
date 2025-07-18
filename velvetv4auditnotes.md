@@ -1902,7 +1902,7 @@ You can view the full finding at https://cantina.xyz/code/8cf9c7a0-a7a6-446a-857
 
 This bug seems very easy to spot so why did you not spot it? The reason is because you didnt apply the zoom out methodology. A lot of times, you tend to zoom into different functions as that is the point of a first pass and assumption analysis. You are going through every function in a user path, assumption analyzing each line and going as deep as you can which is great and what you are supposed to do. 
 
-The problem is that the job isnt done there though and this is where the zoom out methodology becomes important. AAfter doing a first pass and assumption analysis, you need to take the function or the path that you have just analysed and see where else this path / function can be applied in the codebase. Just because a path/function seems happy and everything works fine, when you see how that path is applied to other parts of the codebase, it may introduce bugs and this is the highest level of bugs you can find. In this zoom out phase is where you will find most of the unique bugs.
+The problem is that the job isnt done there though and this is where the zoom out methodology becomes important. After doing a first pass and assumption analysis, you need to take the function or the path that you have just analysed and see where else this function is used in the codebase. Just because a path/function seems happy and everything works fine, when you see how that path is applied to other parts of the codebase, it may introduce bugs and this is the highest level of bugs you can find. In this zoom out phase is where you will find a lot of bugs.
 
 Lets look at how zooming out would've helped us spot this bug. I initially looked at the whole flow of TokenBalanceLibrary::getControllersData and assessed the unusedCollateralPercentage calculation with numeric examples and all but the problem was that after doing the first pass, when i saw the unusedCollateralPercentage used in TokenBalanceLibrary::_getAdjustedTokenBalance, i assumed that since the calculation was correct for the percentage, every where it would be used, would also be correct which obviously was the same assumption the devs had and as you can see from this finding, that is definitely not the case.
 
@@ -1940,6 +1940,8 @@ Having a token with zero balance as a portfolio token prevents any deposits from
 Users can still withdraw from the portfolio through emergency withdrawal.
 
 With this finding, zoom out methodology would have easily shown you that when a vault is liquidated, the balance becomes 0, you looked at the _tokenRemoval function which in isolation, when you zoomed in with the first pass and the assumption analysis, looked good but if you zoomed out and asked where is this function used ? You would have seen that it can be used to remove tokens that have been liquidated and if the tokens are liquidated, the balance is 0 and _tokenRemoval doesnt allow 0 token removals as the code above shows and that would have been another easy vulnverabilty. So to summarise, just because a function works as intended, doesnt mean it cannot cause a vulnerability. You need to zoom out and question where the function/path/variable is used in the codebase and what the implications of this are.
+
+Once zoom out analysis is used for a function, the next thing is function state change analysis which is a concept I introduced in RAACV2AuditNotes so check that out.
 
 # 23 SIMILAR FUNCTION COMPARISONS
 
