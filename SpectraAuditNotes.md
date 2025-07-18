@@ -357,7 +357,7 @@ Compile and copy the bytecode. Take the bytecode to the evm playground, take out
 
 # 7 ONLYINITIALISING BUG THAT A LOT OF PROTOCOLS IGNORE
 
-When a contract is meanr to be upgradeable, as you know, the contract usually uses an init function with the initializer modifier but there are issues that can come with that which i cover beow so have a look.
+When a contract is meant to be upgradeable, as you know, the contract usually uses an init function with the initializer modifier but there are issues that can come with that which i cover beow so have a look.
 
 ```solidity
 
@@ -660,6 +660,7 @@ I thought this part of the spectra was code was extremely interesting as I did a
     }
 ```
 
+# 9 FLASH LOAN
 
 
 
