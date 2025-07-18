@@ -208,3 +208,111 @@ Once zoom out analysis is used for a function, the next thing is function state 
 
 # STEP 3 - FUNCTION STATE CHANGE ANALYSIS (FROM RAACV2AUDITNOTES)
 
+We have covered 2 very important auditing methods that I use in previous audit notes namely assumption analysis and zoom out methodology. Now I will introduce a new analysis method that builds on both of the previous ones that will help you always spot bugs and it is bold to say but with a mix of these 2 analysis methods and enough time, there shouldnt be a single bug out there thay you cannot spot.
+
+Function state change analysis can be broken down into 2 main types. Single function state change analysis and cross function state change analysis.They both work in 3 steps. The first step has to do with identifying an entry point function which we covered in x audit notes  (say function A) and looking at all state variable changes in that function and seeing state variable x for example that gets read or changed in function A. 
+
+Next step is thinking about what time would state variable x need to change to cause unexpected behaviour? By this I mean would someone have to front run another user and change the state to cause unexpected behaviour ? Is there a certain time like during protocol pause or emergency pause or any other time related functionality that the codebase uses where changing this state variable will cause unexpected behaviour? Do I have to change the state after the user has called the function so when they call it again , it would cause unexpected behaviour ? These are all things to consider in this phase 
+
+The final step is asking what value do I need this state variable to be to cause unexpected behaviour ? Does it need to be higher than a certain value ? Lower ? The same ? What value change will cause the most impact?
+
+
+The main cause of catastrophic bugs in any system are unexpected state variable changes so by following this 3 step analysis on every function once you have context on the codebase and covered assumption analysis and zooming out, there is no bug you shouldn’t be able to find. This is the winning formula
+
+
+Lets look at a finding to see how function state change analysis would have helped you easily spot this bug.
+
+The RWAVault contract lacks slippage protection mechanisms in redeemNFT.
+
+
+NFT redemption without maximum share limit: In redeemNFT, users cannot specify the maximum number of shares they're willing to burn for a randomly selected NFT. The function calculates sharesBurned = convertToShares(nftPrice) without allowing users to set an upper bound, potentially forcing them to burn more shares than expected if the NFT's value or vault share price changes unfavorably.
+
+```solidity
+    function redeemNFT() external override nonReentrant notBlacklisted(msg.sender) {
+        if (address(vrfConsumer) == address(0)) revert InvalidVRFAddress();
+
+        (address adapter, uint256 tokenId) = getNextRandomNFT();
+
+        bytes memory data = abi.encode(tokenId);
+        uint256 nftPrice = IVaultAssetAdapter(adapter).getAssetValue(data);
+        if (nftPrice == 0) revert InvalidNFT();
+        uint256 sharesBurned = convertToShares(nftPrice);
+        if (IVaultToken(vaultToken).balanceOf(msg.sender) < sharesBurned) revert InsufficientBalance();
+
+        IVaultToken(vaultToken).burn(msg.sender, sharesBurned);
+        IVaultAssetAdapter(adapter).withdraw(data, msg.sender);
+        // send the request for the next token to redeem
+        vrfConsumer.requestRandomWords();
+
+        emit RedeemNFT(msg.sender, IVaultAssetAdapter(adapter).getAssetToken(), tokenId, sharesBurned);
+    }
+
+```
+
+Now there is no parameter that even gives any hint that slippage protection is needed here so assumption analysis during a first pass wont show you this bug as there is no line that handles slippage to analyse so that analysis method wont have helped you spot the bug. Zoom out methodology wont work here either because redeemNFT isnt called anywhere else in the codebase and this is literally an entry point so zooming out will probably take yout back to thinking about where the NFT's come from or logic that actually has to do with getting the NFT's to the adapter where they are redeemed which is great but going down that route wont have helped you find this slippage bug.
+
+Lets see how function state change analysis would have worked following our 3 step process. The first step is identifying our entry point which we already have with the redeemNFT function and then we look into the state variables in this function and pick one of interest and as you can see, there is a convertToShares function which does the following:
+
+```solidity
+function convertToShares(uint256 assetAmount) public view override returns (uint256) {
+        uint256 supply = IVaultToken(vaultToken).totalSupply();
+        uint256 assets = totalAssets();
+        if (supply == 0 || assets == 0) return assetAmount;
+        // Round up division: (a * b + c - 1) / c
+        return (assetAmount * supply + assets - 1) / assets;
+    }
+
+```
+
+Immediately you can already see 2 state variables here which are the totalSupply of the vault token returned by the totalSupply which is a state variable and the totalAssets function which does the following:
+
+```solidity
+function totalAssets() public view override returns (uint256 totalValue) {
+        for (uint256 i = 0; i < adapters.length; i++) {
+            totalValue += IVaultAssetAdapter(adapters[i]).totalValue();
+        }
+        return totalValue;
+    }
+   
+ /// @inheritdoc IVaultAssetAdapter
+    function totalValue() public view virtual returns (uint256 _totalValue) {
+        uint256 len = _tokenIds.length;
+        for (uint256 i = 0; i < len; ++i) {
+            _totalValue += priceOracle.getLatestPrice(_tokenIds[i]);
+        }
+        return _totalValue;
+    }
+
+    function getLatestPrice(uint256 _tokenId) external view returns (uint256 _crvUSDPrice, uint256 _lastUpdateTimestamp) {
+        uint256 usdPrice = tokenToHousePrice[_tokenId]; 
+        if (address(dataFeed) == address(0)) {
+            // Fallback: assuming 1:1 price
+            _crvUSDPrice = usdPrice;
+        } else {
+            uint8 decimals = dataFeed.decimals();
+            (, int256 answer, , , ) = dataFeed.latestRoundData();
+
+            if (answer <= 0) return _fallBackHousePrice(_tokenId);
+
+            if (circuitBreakerEnabled) {
+                uint256 adjustedMinThreshold = _adjustThresholdToDecimals(minPriceThreshold, decimals); 
+                uint256 adjustedMaxThreshold = _adjustThresholdToDecimals(maxPriceThreshold, decimals);
+                
+                if (uint256(answer) < adjustedMinThreshold || uint256(answer) > adjustedMaxThreshold) {
+                    return _fallBackHousePrice(_tokenId); 
+                }
+            }
+            _crvUSDPrice = (usdPrice * 10 ** decimals) / uint256(answer);
+        }
+        _lastUpdateTimestamp = tokenToLastUpdateTimestamp[_tokenId];
+    }
+
+```
+
+So we can see that the totalAssets function uses the tokenToHousePrice mapping which is another state variable. So to complete step 1, lets just focus on the tokenToHousePrice state variable.
+
+Next step is thinking about what time would the tokenToHousePrice mapping need to change to cause unexpected behaviour? Well for our context on the redeemNFT function, this state would need to change prior to any user calling redeemNFT because what could happen is that a user has an nft that they want to redeem that costs 1000 and they have 2000 shares in their balance but they only intend to spend 1000 on the nft. if the tokenToHousePrice mapping changed prior to the user calling the redeemNFT function, then the getLatestPrice will return a different value to the totalAssets function which changes its value and can end up with the user spending more/less than what they expected to pay for the NFT. So with this step, we have identified when the state variable will need to change to cause unexpected behaviour. So we already know wwe have a problem.
+
+The final step is asking what value do I need this state variable to be to cause unexpected behaviour ? Does it need to be higher than a certain value ? Lower ? The same ? What value change will cause the most impact? For our example, the biggest impact would be if the tokenToHousePrice mapping increased the token price prior to the user calling redeemNFT causing the user to pay more than they expected. So the resolution to this would be to add a slippage check to make sure that the user is paying what they expect for each NFT and this is where the slippage check would come in.
+
+This is the power of function state change analysis. There is no bug that cannot be caught using one of the 3 analysis methods detailed here. This can only be done after the first 2 analysis becuase without them, you dont have enough context to answer each question that each step requires and the prior analysis steps can help you spot bugs along the way. You cant go wrong with this.
