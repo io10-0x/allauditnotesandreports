@@ -237,6 +237,7 @@ function computeYield(
 
 ```
 
+It is extremely important to note here how in this example, i used all the decimals associated to make the calculations. This is important when doing numerical examples. So in the example, i didnt have _oldPTRate = 1. I included the e27 to represent the decimals. You must always do this. If you are writing an example with x = 100 * 2 = 200 for example, this is wrong because solidity sees that 100 as 100e18*2e18 = 200e36 so you see these values are not the same and your examples MUST reflect this. If it doesnt, it can lead you to a lot of false positives
 
 
 
@@ -661,6 +662,7 @@ I thought this part of the spectra was code was extremely interesting as I did a
 ```
 
 # 9 FLASH LOAN
+
 
 
 
