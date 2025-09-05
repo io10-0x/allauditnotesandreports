@@ -339,7 +339,7 @@ If you read all the comments on this POC, you will understand the importance of 
 
 # 8 CUSTOM DATA TYPES IN SOLIDITY
 
-Auditing zaros was the first time I came across custome data types ans how they are configured. When looking at the vaultrouterbranch contract, i saw a DepositContext struct containing a UD60x18 data type I had never seen before so I decided to look into it. I made all relevant notes in the valuetype.sol file related to ud60x18 data type to explain in detail how custom types work and what ud60x18 intends to acheive. See the contents of the file below. All the comments I made were to explain what was going on and you will learn loads from this. I do intend to go deeper in the files to explore more if i get some time but from the comments, you should get a good understanding of whats going on:
+Auditing zaros was the first time I came across custome data types ans how they are configured. When looking at the vaultrouterbranch contract, i saw a DepositContext struct containing a UD60x18 data type I had never seen before so I decided to look into it. I made all relevant notes in the valuetype.sol file related to ud60x18 data type to explain in detail how custom types work and what ud60x18 intends to achieve. See the contents of the file below. All the comments I made were to explain what was going on and you will learn loads from this. I do intend to go deeper in the files to explore more if i get some time but from the comments, you should get a good understanding of whats going on:
  ```solidity
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.8.19;
@@ -477,7 +477,7 @@ using {
 
  ```
 
-# 9 INTERNAL VS EXTERNAL LIBRARIES 
+# 9 INTERNAL VS EXTERNAL LIBRARIES, USING KEYWORD
 
 The insiparation from this came when looking at base.t.sol , I will show an example. in base.t.sol, there is tis function which is called:
 ```solidity
@@ -568,17 +568,15 @@ library Math {
 }
 
 contract Example {
-    using Math for uint256;
 
     function sum(uint256 a, uint256 b) external pure returns (uint256) {
-        return a.add(b);
+        return Math.add(b);
     }
 }
 ```
 In this case, the Math library is not deployed separately; its code is embedded in the Example contract.
 
-External Libraries (Deployed)
-If a library contains public or external functions, it must be deployed as a separate contract. Contracts that use the library will call its functions via delegatecall.
+External Libraries (USING VS LIBRARY DEPLOYMENT)
 The library is deployed once, and its address is linked to the contract during deployment.
 This makes it possible to share the library's code across multiple contracts, reducing the overall deployment cost for the ecosystem.
 Example:
