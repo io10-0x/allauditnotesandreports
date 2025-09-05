@@ -561,12 +561,15 @@ Solidity libraries do not always need to be deployed. Whether a library is deplo
 
 **Example:**
 ```solidity
+
 library Math {
-    function add(uint256 a, uint256 b) internal pure returns (uint256) {
+    function add(uint256 a, uint256 b) internal returns (uint256) {
         return a + b;
     }
 }
-
+```
+```solidity
+import {Math} from "MathLocation";
 contract Example {
 
     function sum(uint256 a, uint256 b) external pure returns (uint256) {
@@ -576,9 +579,17 @@ contract Example {
 ```
 In this case, the Math library is not deployed separately; its code is embedded in the Example contract.
 
-External Libraries (USING VS LIBRARY DEPLOYMENT)
-The library is deployed once, and its address is linked to the contract during deployment.
+External Libraries 
+The library has to deployed once, and its address is linked to the contract during deployment.
+In foundry, the cli command would look something like:
+```bash
+forge create contracts/Example.sol:Example \
+  --rpc-url <RPC_URL> \
+  --private-key <PRIVATE_KEY> \
+  --libraries "MathLib:0xYourLibAddressHere"
+```
 This makes it possible to share the library's code across multiple contracts, reducing the overall deployment cost for the ecosystem.
+
 Example:
 ```solidity
 
@@ -587,20 +598,21 @@ library ExternalMath {
         return a + b;
     }
 }
-
+```
+```solidity
+import {ExternalMath} from "ExternalMathLocation";
 contract Example {
-    using ExternalMath for uint256;
 
     function sum(uint256 a, uint256 b) external pure returns (uint256) {
-        return a.add(b);
+        return ExternalMath.add(b);
     }
 }
 ```
 In this case:
 
-ExternalMath is deployed as a separate contract.
+You will have to deploy ExternalMath as a separate contract. 
 The Example contract uses the address of ExternalMath to delegate calls to its functions.
-
+You can see a more in depth conversion on linking libraries in foundry in your chimera course notes
 
 # 10 STORAGE POINTERS IN SOLIDITY
 
