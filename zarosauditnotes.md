@@ -573,13 +573,13 @@ import {Math} from "MathLocation";
 contract Example {
 
     function sum(uint256 a, uint256 b) external pure returns (uint256) {
-        return Math.add(b);
+        return Math.add(a,b);
     }
 }
 ```
 In this case, the Math library is not deployed separately; its code is embedded in the Example contract.
 
-External Libraries 
+**1. External Libraries **
 The library has to deployed once, and its address is linked to the contract during deployment.
 In foundry, the cli command would look something like:
 ```bash
@@ -604,7 +604,7 @@ import {ExternalMath} from "ExternalMathLocation";
 contract Example {
 
     function sum(uint256 a, uint256 b) external pure returns (uint256) {
-        return ExternalMath.add(b);
+        return ExternalMath.add(a,b);
     }
 }
 ```
@@ -612,7 +612,32 @@ In this case:
 
 You will have to deploy ExternalMath as a separate contract. 
 The Example contract uses the address of ExternalMath to delegate calls to its functions.
-You can see a more in depth conversion on linking libraries in foundry in your chimera course notes
+You can see a more in depth conversion on linking libraries in foundry in your chimera course notes on configuring echidna
+
+** USING KEYWORD **
+
+When you have a library with external/public functions, you do not always have to deploy the library and link it everytime. An alternative is to use the global using keyword and connect the library to a data type which is what most people go for. See below:
+
+Example:
+```solidity
+
+library ExternalMath {
+    function add(uint256 a, uint256 b) public pure returns (uint256) {
+        return a + b;
+    }
+}
+```
+```solidity
+import {ExternalMath} from "ExternalMathLocation";
+contract Example {
+    using ExternalMath for uint256
+    function sum(uint256 a, uint256 b) external pure returns (uint256) {
+        return a.add(b);
+    }
+}
+```
+
+
 
 # 10 STORAGE POINTERS IN SOLIDITY
 
