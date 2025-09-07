@@ -113,6 +113,8 @@ After 2 years:
 After 10 years:
 1000×(1.05)^10 =1628.89
 
+Think of 1.05 as the liquidity index so after one year, the liq index is 1.05, after 2 years, the interest rate accrued over that year is 1.05 which is what calculateLinearInterest gets for us. Then we multiply that by the last index which was also 1.05 i.e. (1.05)^2 or 1.05 * 1.05. This is our new liquidity index. Then in rToken.balanceOf, assume their raw balance started at 1000, after 1 year, their raw balance grows to 1050 and then after 2 years, their full balance is 1050 * 1.05^2/1.05 = 1102.5 which is how all of this makes sense.
+
 Key Insight: Instead of growing linearly, the value multiplies each period, leading to exponential growth.
 
 Notice how r which is interest rate per period is different when calculating linearly and when compounding even though the interest rate is the same at 5%. When getting a linear calculation, the interest rate is only considered on the principal amount which is what was said above. So what it means is that only the principal gains interest which is why in the linear calculation, after 2 years, the interest is (0.05(5%) times 2) times 1000. So the interest is only on the original 1000 invested.
