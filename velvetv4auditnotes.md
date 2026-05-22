@@ -74,7 +74,7 @@ Velvet use abi.decode in their VelvetSafeModule which triggered me to have a loo
 
 So you already know protocols with liquidation logic or any other logic where they ideally dont want the logic to revert under any other circumstances so they use try/catch blocks which i have already covered how to also exploit in a situation where the information in that try/catch block is necessary protocol logic
 
-Anyway, lets look at how we can use abi.decode.To understand this, we first have to look at how solidity handles custom errors:
+Anyway, lets look at how we can use abi.decode. To understand this, we first have to look at how solidity handles custom errors:
 
 Solidity has released a blog post detailing how to efficiently revert with a custom string reason. The blog post includes an example assembly block that can be used to return a custom error message:
 
@@ -152,7 +152,7 @@ mstore(add(free_mem_ptr, 4), 32)
 - Length of string
 - actual string
 
-These 4 things come together to form the data we want to send that produces the custom string errors you see in solidity require statements. For actual custom error data types, these are covered in the asseembly course so you can go have a look at that in your oen time. So as we know, forming data in bytes is just getting all this information in bytes and concatenating it. This is how calldata is formed.
+These 4 things come together to form the data we want to send that produces the custom string errors you see in solidity require statements. For actual custom error data types, these are covered in the HOW CUSTOM ERRORS ARE RETURNED IN THE EVM section  of the assemeblyandfvcourse repo so you can go have a look at that in your own time. So as we know, forming data in bytes is just getting all this information in bytes and concatenating it. This is how calldata is formed. Also keep in mind that the above format only applies to how error strings are to be formed for correct decoding via abi.decode. This format is not how the evm represents strings in memory. To learn about that, see point 9 in io10reviewv3/IO10AuditFiles/GeneralLearning/ConceptDump.md.
 
 So far in memory, we only have the selector padded with a bunch of zeros after the 4th byte so we want to add the next bit of info into memory which is adding 32. So why do we add this 32, if you look at the list of info we need to add to this custom error, we add the offset and all this does is tells solidity how many bytes to skip AFTER the selector to get to the length of the string we want to return. So the way the offset works is that it tells the EVM where the start of the length of the string is in the calldata. The offset doesnt count the selector as part of the calldata so the offset is saying after the selector, how many bytes after that is the length of the dynamic data type which in this case is the string. 
 
@@ -208,7 +208,7 @@ In the code snippet above, the data returned by the low-level call is pointed to
 
 This step is necessary to align the data so abi.decode will be able to decode the revert reason string and ignore the 4 bytes selector “0x08c379a0” which is the selector for “Error(string)”. So when decoding, a result, that result contains the selector, so in order to properly decode, we want to skip the selector so we have just the offset, the length and then the actual string so the decoding can work properly.
 
-This looks pretty ok so far and will actually work perfectly for abi.decode but lets look where the problem is. In a low level call, we already know that the bool and bytes memory are returned but what you didnt know is that the data returned in the bytes memory data type is padded with the length of the data. Let me explain what this means. So before the shift the result memory pointer by 4 bytes, this is what it looked like :
+This looks pretty ok so far and will actually work perfectly for abi.decode but lets look where the problem is. In a low level call, we already know that the bool and bytes memory are returned but what you didnt know is that the data returned in the bytes memory data type is padded with the length of the data. Let me explain what this means. So before the shift of the result memory pointer by 4 bytes, this is what it looked like :
 
 ```
 [0] 0000000000000000000000000000000000000000000000000000000000000064
@@ -218,12 +218,13 @@ This looks pretty ok so far and will actually work perfectly for abi.decode but 
 [4] 0000000000000000000000000000000000000000000000000000000000000000
 ```
 
+
 So like i said above, whenever a variable is declared with bytes memory, the data that is returned is padded with 32 bytes containing the length of the data which is index 0 as 0x64 which is 100 in decimals which is correct as the byte length of the whole result is 100 bytes long. As we know, each index is 32 bytes which is why the data is formatted like that.
 in index 1, there are 32 bytes and these bytes contain the selector of Error(string) which is 4 bytes and the 32 bytes containing the offset which is 32 (20 in hex). So those 36 bytes are as we expect. This is then followed by the length of the string and then the actual string which is stuff we already know.
 
 What happens after we do result := add(result, 0x04) ?
 
-WE already know that this sets the free memory pointer to 4 bytes ahead. so when we pass this new result memory pointer to abi.decode, this is what solidity is reading:
+We already know that this sets the free memory pointer to 4 bytes ahead. so when we pass this new result memory pointer to abi.decode, this is what solidity is reading:
 
 ```
 [0] 0000000000000000000000000000000000000000000000000000006408c379a0
@@ -384,7 +385,6 @@ revert(free_mem_ptr, 100)
 Alternatively, if the malicious actor is attempting to drain the transaction gas and NOT cause an “out of gas” revert, they can calculate a dynamic offset based on the remaining gas (using the gasleft() function) in order to waste almost all the gas without causing a revert.
 
 I havent covered this last part in detail but you should go find out what memory expansion is using the link and see the inner workings of this second part.
-
 
 # 3 EIP-2612 PERMIT FUNCTION, WETH PERMIT EXPLOIT
 
@@ -1702,7 +1702,7 @@ The data field contains 0x08c379a0000000..., which is the function selector for 
 Decoding the data reveals that the error message is: TransferHelper::safeTransfer: transfer failed
 This means that a transfer operation failed in the TransferHelper.safeTransfer() function.
 
-Lets unpack this a bit more. So as we have learnt in the assembly course and even earlier in these notes where we spoke on abi.decode, we know that if we see 0x08c379a0, we know that the data we are looking at is a custom error. I will talk more about how to properly decode data when we look at some more events below. We also know that with custom errors in solidity, we have the dat size, the selector for Error(string), the offset, the length of the string and then the actual string. So when we decode the actual string, we get TransferHelper::safeTransfer: transfer failed. This means that somewhere in the call flow for Rebalancing::repay, the BorrowManager contract attempts to use TransferHelper::safeTransfer() to transfer tokens, but the transfer fails. This is a very important piece of information that can help us identify the root cause of the issue. So now we can go and look at the call flow for Rebalancing::repay and find everytime the borrowManager calls TransferHelper::safeTransfer() and see what is going on there. For the above events, i know the reason why the transfer fails. It is because the BorrowManager is trying to repay the flashloan but it doesnt have the required amounts. I knew this after debugging the way I am explaining now.
+Lets unpack this a bit more. So as we have learnt in the assembly course and even earlier in these notes where we spoke on abi.decode, we know that if we see 0x08c379a0, we know that the data we are looking at is a custom error. I will talk more about how to properly decode data when we look at some more events below. We also know that with custom memory errors in solidity, we have the data size, the selector for Error(string), the offset, the length of the string and then the actual string. So when we decode the actual string, we get TransferHelper::safeTransfer: transfer failed. This means that somewhere in the call flow for Rebalancing::repay, the BorrowManager contract attempts to use TransferHelper::safeTransfer() to transfer tokens, but the transfer fails. This is a very important piece of information that can help us identify the root cause of the issue. So now we can go and look at the call flow for Rebalancing::repay and find everytime the borrowManager calls TransferHelper::safeTransfer() and see what is going on there. For the above events, i know the reason why the transfer fails. It is because the BorrowManager is trying to repay the flashloan but it doesnt have the required amounts. I knew this after debugging the way I am explaining now.
 
 Knowing the address where the event came from is crucial because it tells you where the event is coming from. Without this, you are going to be looking through a wide range of contracts to try and decypher where the message is coming from. When looking at an event, you MUST always look at the address field and figure out where the event is coming from. This will point you in the direction of where to look for the error.
 Also note that no event emitted in the event log got there by mistake. You need to be able to understand every event and figure out why it was emitted and what it means. This will help you fully understand the call flow and every contract being interacted with and will also help you with decoding the data which we are going to be talking about more below.
@@ -2240,6 +2240,7 @@ You can view the full finding at:
 https://cantina.xyz/code/8cf9c7a0-a7a6-446a-8577-1e2c254eb5a8/findings?status=new,duplicate,confirmed,acknowledged,fixed,rejected&severity=medium,high&created_by=io10,jonatascm&finding=136
 
 So as you can see, if a call is meant to be a static call and not alter state and somehow manages to do that, it should revert but since it is in a try/catch block as we see above, it doesn't, the function will consume all of the gas left for the function leading to an out of gas error but due to the 63/64 gas rule, there will still be some gas left to carry out the rest of the function depending on how much gas it costs, if the rest of the function costs a lot more, then the whole function will revert once it runs out of gas so this is something you have to keep in mind. 
+
 
 # 29 BLOCK.TIMESTAMP IS ONLY RECOGNIZED AT RUNTIME 
 
