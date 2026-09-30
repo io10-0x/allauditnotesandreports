@@ -85,32 +85,111 @@ The formula typically used to calculate liquidity index was used in RAAC in the 
 
 Why is Multiplication Necessary?
 
-At the start of the lending pool system, the liquidity index starts at 1 and so does the usage index. To understand why this is necessary, we need to consider what an index is. As described on line 9, the index has the total interest over all periods. The reason we use an index is to have a global tracker that determines the total interest over all periods. The idea is that we have a global liquidity rate and a global usage rate. How do we know what rate to apply to each user at any given time ? This is what the liquidity and usage indexes help us track. Lets see a numerical example from rToken.balanceOf. 
+At the start of the lending pool system, the liquidity index starts at 1 and so does the usage index. To understand why this is necessary, we need to consider what an index is. As described on line 9, the index has the total interest over all periods. The reason we use an index is to have a global tracker that determines the total interest over all periods. The idea is that we have a global liquidity rate and a global usage rate. How do we know what rate to apply to each user at any given time ? This is what the liquidity and usage indexes help us track. Lets see a numerical example that will break all of this down. 
 
-```solidity
-    function balanceOf(
-        address account
-    ) public view override(ERC20, IERC20) returns (uint256) {
-        uint256 rawBalance = super.balanceOf(account);
-        uint256 liquidityIndex = ILendingPool(_lendingPool)
-            .getNormalizedIncome();
+## Assume user A deposits 100e18 pmUSD in the lending pool to start the system (with no deposit fees for simplicity):
 
-        // No balance, return raw balance
-        if (_userState[account].index == 0 || rawBalance == 0) {
-            return rawBalance;
-        }
+- LendingPool::deposit
+- ReserveLibrary::deposit
+- updateReserveInterest runs
+      block.timestamp = 5000
+      reserve.lastUpdateTimestamp = 2000 (from lending pool constructor)
+      timeDelta = 3000
+      oldLiquidityIndex = 1e27. (think of this as 0%. I will explain why shortly)
+      oldUsageIndex = 1e27
+      rateData.currentLiquidityRate = 0 (from lending pool constructor)
+      rateData.currentUsageRate = 0 (from lending pool constructor)
+      rateData.primeRate = 7e25 (from lending pool constructor)
+    
+    - calculateLiquidityIndex(0,3000,1e27) runs
+     - calculateLinearInterest(0,3000,1e27) runs
+       cumulatedInterest = 0;
+       return WadRayMath.RAY + 0 == 1e27; (the reason why we add 1e27 to the linear "interest" will be covered shortly when cumulatedInterest is non zero for better visibility. for now, just keep in mind that the liquidity rate is 0 so over timeDelta, there is no rate to apply over timeDelta which is why cumulatedInterest is 0)
+    return 1e27.rayMul(1e27).toUint128() == 1e27 (remember that one of the things we aim to prove with this example is why this multiplication happens here which we will go into shortly)
+      reserve.liquidityIndex = 1e27;
+    
+    - calculateUsageIndex(0,3000,1e27) runs
+      - calculateCompoundedInterest(0,3000) runs
+        ratePerSecond = 0;
+        exponent = 0;
+        return WadRayMath.rayExp(0) == 1e27; (we go into what this rayExp function does in a different section but keep in mind for now that usageRate is 0 so the usageIndex does not change over timeDelta which is why the usageIndex is still 1e27)
+        reserve.usageIndex = 1e27;
+        reserve.lastUpdateTimestamp = 5000;
 
-        // raw * (usageIndex / positionIndex)
-        uint256 indexMultiplier = liquidityIndex.rayDiv( //c ray div function rounds up occasionally so keep that in mind
-            _userState[account].index
-        );
-       return rawBalance.rayMulDown(indexMultiplier);
-    }
-```
+        //c we are skipping the reserve.scaledPendingProtocolFee evaluation in updateReserveInterests as that is not relevant to this explanation
 
-Assume a user deposits 100e18 pmUSD in the lending pool where :
+    - RToken::mint(address(this), msg.sender, 100e18, 1e27) runs
+      - _mintUserInterest(msg.sender, 1e27) runs
+        userBalance = 0;
+        _userState[user].index = 1e27; (this is the main reason why the liquidity index is implemented and we will see why shortly)
+        return 0;
+      userIncrease = 0;
+      _rawTotalDeposits += 100e18;
+      - _mint(msg.sender, 100e18)
+        user A rToken balance == 100e18
+        amountMinted = 100e18.
 
-COVER THE FULL CALCULATION FROM WHEN A USER FIRST DEPOSITS, ANOTHER USER BORROWS AND THE RATES ARE UPDATED AND TIME PASSES WHICH ACCRUES INTEREST AND THEN A USER DEPOSITS AND THE LIQ INDEX IS CACHED AND WHEN THE LIQUIDITY INDEX IS UPDATED AND THEN WHEN THE USER QUERIES THERI BALANCE, HOW THE INDEXES GET DIVIDED TO YIELD THE ACTUAL RATE TO APPLY TO THE RAW BALANCE. THIS IS WHY THE LAST INDEX IS MULTIPLIED BY THE "CUMULATED INTEREST". REASON FOR QUOTATION IS BECAUSE TECHNICALLY THIS IS THE CUMULATED RATE AND NOT THE CUMULATED INTEREST. THIS IS WHERE THINGS CAN GET MISLEADING. INTEREST IS APPLIED ON THE PRINCIPAL. IN CALCULATELINEARINTEREST THERE IS NO PRINCIPAL. THE RATE IS REPRESENTED IN RAY JUST LIKE IF YOU HAVE A RATE OF 1%, IN DECIMAL, THAT IS 0.01. IN RAY, THAT IS 1E25. SO IT IS NOT CUMULATED INTEREST, IT IS CUMULATED RATE. THE KEY DIFFERENCE IS HOW THE RATE IS CUMULATED FOR LENDERS VS BORROWERS WHICH IS WHERE THE DIFFERENCE IS. FOR LENDERS, IT IS SIMPLY ADDED TO RAY. THE REASON IS SIMPLE. IF YOU HAVE 1000 AT 10% A YEAR, IT IS THE SAME AS 1000 * 1.10 BECAUSE ADDING 1 PRESERVES THE PRINCIPAL. 1000 * 0.10 == 100. 1000 * 1.10 == 1100. ITS A MATH TRICK. THE FACT THAT IT IS CALLED LINEAR INTEREST IS DECEIVING BECAUSE THERE IS NOTHING LINEAR ABOUT THAT CALCULATION
+      - updateInterestRatesAndLiquidity(reserve, rateData, 100e18, 0) runs
+        reserve.totalLiquidity = 100e18
+        reserve.totalUsage = 0;
+        - calculateUtilizationRate(100e18,0) runs
+          return 0; (totalUsage is 0 which means none of the liquidity is borrowed with means util rate is 0)
+          rateData.currentUtilizationRate = 0;
+        - calculateBorrowRate(7e25, 1.75e25, 3.5e25,8.363e26,8e26,0) runs (the arguments are evaluated based on the expected rates from the lending pool constructor)
+          return 0; (utilization rate is 0 i.e. no one has borrowed anything so the usage rate should be 0)
+          rateData.currentUsageRate = 0;
+        - calculateLiquidityRate(0, 0, 1e26, 0) runs (the arguments are evaluated based on the expected rates from the lending pool constructor)
+          return 0; (totalUsage is 0 which means no one has borrowed. lenders are paid from borrowers so no borrows means no liquidity rate)
+          rateData.currentLiquidityRate = 0;
+          rateData.currentProtocolFeeRate = 0; //c this variable is useless
+      
+- ReserveLibrary::deposit ends.
+  We don't care about anything else that happens in LendingPool::deposit for the purposes of this example.
+
+## User B opens vault position, deposits 200e18 iREET and borrows 70e18 pmusd in the same timestamp as User A's deposit.
+
+- LendingPool::borrow(iREETAdapter, data, 70e18) runs
+- ReserveLibrary.updateReserveState(reserve, rateData) runs
+  timeDelta = 5000 - 5000 = 0;
+  return; (no need to update liquidity index and usage indexes over the previous period because in this scenario, there is no previous period to update. User B is borrowing in the same timestamp as User A's deposit)
+
+  //c we dont care about _validateBorrow and _ensureLiquidity for this example so we skip these
+  - DebtToken::mint(msg.sender,msg.sender,70e18,1e27,abi.encode(adapter, data)) runs
+    positionIndex = 0;
+    initialBalance = 0;
+    - mintUserInterest(msg.sender,0,0) runs
+      return 0;
+    - _mint(msg.sender, 70e18) runs
+      userB's raw balance is updated to 70e18
+      _rawTotalBorrows += 70e18
+       position.positionIndex = 1e18 (similar to line 124, we store the usage index when user B borrows which gives an indication of why the indexes are implemented. keep reading)
+       position.rawDebtBalance = 70e18
+
+      - updateInterestRatesAndLiquidity(reserve, rateData, 100e18, 70e18) runs
+        reserve.totalLiquidity = 100e18
+        reserve.totalUsage = 70e18;
+        - calculateUtilizationRate(100e18,70e18) runs
+        - uint256 utilizationRate = 70e18.rayDiv(100e18 + 70e18).toUint128() == 411764705882352941176470588 [4.117e26];
+          return 411764705882352941176470588 [4.117e26]; 
+          rateData.currentUtilizationRate = 0;
+        - calculateBorrowRate(7e25, 1.75e25, 3.5e25,8.363e26,8e26,0) runs (the arguments are evaluated based on the expected rates from the lending pool constructor)
+          return 0; (utilization rate is 0 i.e. no one has borrowed anything so the usage rate should be 0)
+          rateData.currentUsageRate = 0;
+        - calculateLiquidityRate(0, 0, 1e26, 0) runs (the arguments are evaluated based on the expected rates from the lending pool constructor)
+          return 0; (totalUsage is 0 which means no one has borrowed. lenders are paid from borrowers so no borrows means no liquidity rate)
+          rateData.currentLiquidityRate = 0;
+          rateData.currentProtocolFeeRate = 0; //c this variable is useless
+    
+
+
+  
+        
+
+    
+    
+ 
+
+COVER THE FULL CALCULATION FROM WHEN A USER FIRST DEPOSITS, ANOTHER USER BORROWS AND THE RATES ARE UPDATED AND TIME PASSES WHICH ACCRUES INTEREST AND THEN A USER DEPOSITS AND THE LIQ INDEX IS CACHED AND WHEN THE LIQUIDITY INDEX IS UPDATED AND THEN WHEN THE USER QUERIES THERI BALANCE, HOW THE INDEXES GET DIVIDED TO YIELD THE ACTUAL RATE TO APPLY TO THE RAW BALANCE. THIS IS WHY THE LAST INDEX IS MULTIPLIED BY THE "CUMULATED INTEREST". REASON FOR QUOTATION IS BECAUSE TECHNICALLY THIS IS THE CUMULATED RATE AND NOT THE CUMULATED INTEREST. THIS IS WHERE THINGS CAN GET MISLEADING. INTEREST IS APPLIED ON THE PRINCIPAL. IN CALCULATELINEARINTEREST THERE IS NO PRINCIPAL. THE RATE IS REPRESENTED IN RAY JUST LIKE IF YOU HAVE A RATE OF 1%, IN DECIMAL, THAT IS 0.01. IN RAY, THAT IS 1E25. SO IT IS NOT CUMULATED INTEREST, IT IS CUMULATED RATE. THE KEY DIFFERENCE IS HOW THE RATE IS CUMULATED FOR LENDERS VS BORROWERS WHICH IS WHERE THE DIFFERENCE IS. FOR LENDERS, IT IS SIMPLY ADDED TO RAY. THE REASON IS SIMPLE. IF YOU HAVE 1000 AT 10% A YEAR, IT IS THE SAME AS 1000 * 1.10 BECAUSE ADDING 1 PRESERVES THE PRINCIPAL. 1000 * 0.10 == 100. 1000 * 1.10 == 1100. ITS A MATH TRICK. THE FACT THAT IT IS CALLED LINEAR INTEREST IS BECAUSE THE RATE IS APPLIED ON WHATEVER THE PRINCIPAL IS . AT THE END OF THE EXPLANATION, LINK THE INDEX EXPLAANTION TO HOW THE GAUGES USE AN INTEGRAL AND THE MATURITY VAULT HAS ACCUNREALISEDFRACTION. THE IDEA IS THE SAME WITH THESE INDEXES
 
 TALK ABOUT HOW BOTH RTOKEN AND DEBTTOKEN TECHNICALLY BOTH COMPOUND WHICH IS WHY RAWDEBTBALANCE INCREASES AND SO DOES RTOKEN RAW BALANCE AFTER A CALL. THE INTEREST IS MINTED AND THE USER IS EARNING INTEREST ON THE RAW BALANCE WHICH MEANS A DEPOSITING USER THAT COMPOUNDS MORE OFTEN ENDS UP WITH MORE INTEREST
 
