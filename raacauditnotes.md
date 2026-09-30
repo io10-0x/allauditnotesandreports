@@ -192,6 +192,66 @@ At the start of the lending pool system, the liquidity index starts at 1 and so 
 LendingPool::borrow ends
 
 ## User A deposits another 200e18 pmUSD into the lending pool when block.timestamp == 15000. This is where the explanation of why the indexes matter and how the liquidity rate being applied linearly vs usage rate applied exponentially will all make sense. We will also introduce why a buffer will always exist based on the way the rates are applied
+
+- LendingPool::deposit
+- ReserveLibrary::deposit
+- updateReserveInterest runs
+      block.timestamp = 15000
+      reserve.lastUpdateTimestamp = 5000 
+      timeDelta = 10000
+      oldLiquidityIndex = 1e27
+      oldUsageIndex = 1e27
+      rateData.currentLiquidityRate = 22050000000000000000000000 [2.205e25]
+      rateData.currentUsageRate = 3.5e25
+      rateData.primeRate = 7e25 (from lending pool constructor)
+    
+    - calculateLiquidityIndex(22050000000000000000000000 [2.205e25],10000,1e27) runs
+     - calculateLinearInterest(22050000000000000000000000 [2.205e25],10000,1e27) runs
+       cumulatedInterest = 22050000000000000000000000 [2.205e25] * 10000/SECONDS_PER_YEAR == 6992009132420091324200
+       return WadRayMath.RAY + 6992009132420091324200 == 1e27; (the reason why we add 1e27 to the linear "interest" will be covered shortly when cumulatedInterest is non zero for better visibility. for now, just keep in mind that the liquidity rate is 0 so over timeDelta, there is no rate to apply over timeDelta which is why cumulatedInterest is 0)
+    return 1e27.rayMul(1e27).toUint128() == 1e27 (remember that one of the things we aim to prove with this example is why this multiplication happens here which we will go into shortly)
+      reserve.liquidityIndex = 1e27;
+    
+    - calculateUsageIndex(0,3000,1e27) runs
+      - calculateCompoundedInterest(0,3000) runs
+        ratePerSecond = 0;
+        exponent = 0;
+        return WadRayMath.rayExp(0) == 1e27; (we go into what this rayExp function does in a different section but keep in mind for now that usageRate is 0 so the usageIndex does not change over timeDelta which is why the usageIndex is still 1e27)
+        reserve.usageIndex = 1e27;
+        reserve.lastUpdateTimestamp = 5000;
+
+        //c we are skipping the reserve.scaledPendingProtocolFee evaluation in updateReserveInterests as that is not relevant to this explanation
+
+    - RToken::mint(address(this), msg.sender, 100e18, 1e27) runs
+      - _mintUserInterest(msg.sender, 1e27) runs
+        userBalance = 0;
+        _userState[user].index = 1e27; (this is the main reason why the liquidity index is implemented and we will see why shortly)
+        return 0;
+      userIncrease = 0;
+      _rawTotalDeposits += 100e18;
+      - _mint(msg.sender, 100e18)
+        user A rToken balance == 100e18
+        amountMinted = 100e18.
+
+      - updateInterestRatesAndLiquidity(reserve, rateData, 100e18, 0) runs
+        reserve.totalLiquidity = 100e18
+        reserve.totalUsage = 0;
+        - calculateUtilizationRate(100e18,0) runs
+          return 0; (totalUsage is 0 which means none of the liquidity is borrowed with means util rate is 0)
+          rateData.currentUtilizationRate = 0;
+        - calculateBorrowRate(7e25, 1.75e25, 3.5e25,8.363e26,8e26,0) runs (the arguments are evaluated based on the expected rates from the lending pool constructor)
+          return 0; (utilization rate is 0 i.e. no one has borrowed anything so the usage rate should be 0)
+          rateData.currentUsageRate = 0;
+        - calculateLiquidityRate(0, 0, 1e26, 0) runs (the arguments are evaluated based on the expected rates from the lending pool constructor)
+          return 0; (totalUsage is 0 which means no one has borrowed. lenders are paid from borrowers so no borrows means no liquidity rate)
+          rateData.currentLiquidityRate = 0;
+          rateData.currentProtocolFeeRate = 0; //c this variable is useless
+      
+- ReserveLibrary::deposit ends.
+  We don't care about anything else that happens in LendingPool::deposit for the purposes of this example.
+
+
+
     
 
 
