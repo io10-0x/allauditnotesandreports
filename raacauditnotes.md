@@ -87,7 +87,7 @@ Why is Multiplication Necessary?
 
 At the start of the lending pool system, the liquidity index starts at 1 and so does the usage index. To understand why this is necessary, we need to consider what an index is. As described on line 9, the index has the total interest over all periods. The reason we use an index is to have a global tracker that determines the total interest over all periods. The idea is that we have a global liquidity rate and a global usage rate. How do we know what rate to apply to each user at any given time ? This is what the liquidity and usage indexes help us track. Lets see a numerical example that will break all of this down. 
 
-## Assume user A deposits 100e18 pmUSD in the lending pool to start the system (with no deposit fees for simplicity):
+## User A deposits 100e18 pmUSD in the lending pool to start the system (with no deposit fees for simplicity):
 
 - LendingPool::deposit
 - ReserveLibrary::deposit
@@ -166,19 +166,32 @@ At the start of the lending pool system, the liquidity index starts at 1 and so 
        position.rawDebtBalance = 70e18
 
       - updateInterestRatesAndLiquidity(reserve, rateData, 100e18, 70e18) runs
-        reserve.totalLiquidity = 100e18
+        reserve.totalLiquidity = 30e18
         reserve.totalUsage = 70e18;
-        - calculateUtilizationRate(100e18,70e18) runs
-        - uint256 utilizationRate = 70e18.rayDiv(100e18 + 70e18).toUint128() == 411764705882352941176470588 [4.117e26];
-          return 411764705882352941176470588 [4.117e26]; 
-          rateData.currentUtilizationRate = 0;
-        - calculateBorrowRate(7e25, 1.75e25, 3.5e25,8.363e26,8e26,0) runs (the arguments are evaluated based on the expected rates from the lending pool constructor)
-          return 0; (utilization rate is 0 i.e. no one has borrowed anything so the usage rate should be 0)
-          rateData.currentUsageRate = 0;
-        - calculateLiquidityRate(0, 0, 1e26, 0) runs (the arguments are evaluated based on the expected rates from the lending pool constructor)
-          return 0; (totalUsage is 0 which means no one has borrowed. lenders are paid from borrowers so no borrows means no liquidity rate)
-          rateData.currentLiquidityRate = 0;
-          rateData.currentProtocolFeeRate = 0; //c this variable is useless
+        - calculateUtilizationRate(30e18,70e18) runs
+        - uint256 utilizationRate = 70e18.rayDiv(30e18 + 70e18).toUint128() == 7e26;
+          return 7e26; (this is the expected utilization rate. 70e18 borrowed out of an original 100e18 deposit which means 70% utilization rate is correct)
+          rateData.currentUtilizationRate = 7e26;
+        - calculateBorrowRate(7e25, 1.75e25, 3.5e25,8.363e26,8e26,7e26) runs (the arguments are evaluated based on the expected rates from the lending pool constructor)  
+          return 3.5e25; (utilization rate is < optimalUtilizationRate which means the usage rate = optimal rate)
+          rateData.currentUsageRate = 3.5e25;
+        - calculateLiquidityRate(7e26, 3.5e25, 1e26, 70e18) runs (the arguments are evaluated based on the expected rates from the lending pool constructor)
+          uint256 grossLiquidityRate = 7e26.rayMul(3.5e25) == 24500000000000000000000000 [2.45e25]
+          uint256 netProtocolFeeRate = 2.45e25.rayMul(1e26) == 2450000000000000000000000 [2.45e24];
+          uint256 netLiquidityRate = 24500000000000000000000000 - 2450000000000000000000000 == 22050000000000000000000000 [2.205e25];
+          return (22050000000000000000000000 [2.205e25],2450000000000000000000000 [2.45e24]);
+          rateData.currentLiquidityRate = 22050000000000000000000000 [2.205e25];
+          rateData.currentProtocolFeeRate = 2450000000000000000000000 [2.45e24]; //c this variable is useless
+
+          updateReserveInterests(reserve, rateData) runs
+          timeDelta = 5000 - 5000 = 0;
+  return; (no need to update liquidity index and usage indexes over the previous period because in this scenario, there is no previous period to update. User B is borrowing in the same timestamp as User A's deposit)
+
+//c we dont care about what _rebalanceLiquidity does or anything else that happens in LendingPool::borrow as that is not important to our explanation
+
+LendingPool::borrow ends
+
+## User A deposits another 200e18 pmUSD into the lending pool when block.timestamp == 15000. This is where the explanation of why the indexes matter and how the liquidity rate being applied linearly vs usage rate applied exponentially will all make sense. We will also introduce why a buffer will always exist based on the way the rates are applied
     
 
 
