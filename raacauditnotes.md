@@ -29,7 +29,7 @@ The formula typically used to calculate liquidity index was used in RAAC in the 
         cumulatedInterest = cumulatedInterest / SECONDS_PER_YEAR;
         //c let me explain what the above 2 lines are trying to do. The aim is to calculate the interest rate over a certain amount of time that has passed. Think of this formula as rate/SECONDS_PER_YEAR * timeDelta. We know time delta is going to be in seconds and rate is the annual interest rate. By dividing the annual rate by the amount of seconds in a year, what this gives is the interest rate per second. Multiplying the interest rate per second by the amount of seconds that have passed will give us the amount of interest that cumulated in time delta. 
         return WadRayMath.RAY + cumulatedInterest;
-        /*c then the amount of interest that cumulated in time delta is added to 1e27 to make the cummulative interest have ray precision. For example, say rate = 0.2e27 (20% in ray) and timedelta is 100, if you do rate/SECONDS_PER_YEAR * timeDelta, the cumulatedInterest will be 3.171e21
+        /*c then the amount of interest that cumulated in time delta is added to 1e27 to make the cummulative interest have ray precision. For example, say rate = 0.2e27 (20% in ray) and timedelta is 100, if you do rate/SECONDS_PER_YEAR * timeDelta, the rate over timeDelta will be 3.171e21
         
         1e27 + 3.171e21 = 1.00003171e27. So what we have now will be the liquidity index for the last time delta seconds.
 
@@ -52,126 +52,68 @@ The formula typically used to calculate liquidity index was used in RAAC in the 
         //q possible unsafe casting ??? not sure as rayMul always returns 27 decimals so I doubt that would be the case
     }
 
+ /**
+     * @notice Calculates the compounded interest over a period.
+     * @param rate The usage rate (in RAY).
+     * @param timeDelta The time since the last update (in seconds).
+     * @return The interest factor (in RAY).
+     */
+    function calculateCompoundedInterest(
+        uint256 rate,
+        uint256 timeDelta
+    ) internal pure returns (uint256) {
+        if (timeDelta < 1) {
+            return WadRayMath.RAY;
+        }
+        uint256 ratePerSecond = rate.rayDiv(SECONDS_PER_YEAR);
+        uint256 exponent = ratePerSecond.rayMul(timeDelta);
+        // Will use a taylor series expansion (7 terms)
+        return WadRayMath.rayExp(exponent);
+    }
+
+    function calculateUsageIndex(
+        uint256 rate,
+        uint256 timeDelta,
+        uint256 lastIndex
+    ) internal pure returns (uint128) {
+        uint256 interestFactor = calculateCompoundedInterest(rate, timeDelta);
+        return lastIndex.rayMul(interestFactor).toUint128();
+    }
+
 
 ```
 
 Why is Multiplication Necessary?
-If we only added the interest rate to the last index without multiplying, the interest would not compound. Multiplying ensures that past accrued interest also earns interest in future periods.
 
-This follows the compound interest formula:
+At the start of the lending pool system, the liquidity index starts at 1 and so does the usage index. To understand why this is necessary, we need to consider what an index is. As described on line 9, the index has the total interest over all periods. The reason we use an index is to have a global tracker that determines the total interest over all periods. The idea is that we have a global liquidity rate and a global usage rate. How do we know what rate to apply to each user at any given time ? This is what the liquidity and usage indexes help us track. Lets see a numerical example from rToken.balanceOf. 
 
-Final Amount=Principal×(1+r)^t
-where:
+```solidity
+    function balanceOf(
+        address account
+    ) public view override(ERC20, IERC20) returns (uint256) {
+        uint256 rawBalance = super.balanceOf(account);
+        uint256 liquidityIndex = ILendingPool(_lendingPool)
+            .getNormalizedIncome();
 
-Principal = lastIndex
-r = rate
-t = timeDelta / SECONDS_PER_YEAR.
+        // No balance, return raw balance
+        if (_userState[account].index == 0 || rawBalance == 0) {
+            return rawBalance;
+        }
 
-So the liquidity index compounds but the interest is calculated linearly. To understand this, you need to understand the difference between compounding and linear increases. See below:
+        // raw * (usageIndex / positionIndex)
+        uint256 indexMultiplier = liquidityIndex.rayDiv( //c ray div function rounds up occasionally so keep that in mind
+            _userState[account].index
+        );
+       return rawBalance.rayMulDown(indexMultiplier);
+    }
+```
 
-Linear Interest (Addition)
-In linear interest, the interest is added at regular intervals without applying it to the previously accumulated amount.
-This means that only the principal accrues interest over time.
-Formula:
+Assume a user deposits 100e18 pmUSD in the lending pool where :
 
-Total Amount=Principal times (1 + r)^t
+COVER THE FULL CALCULATION FROM WHEN A USER FIRST DEPOSITS, ANOTHER USER BORROWS AND THE RATES ARE UPDATED AND TIME PASSES WHICH ACCRUES INTEREST AND THEN A USER DEPOSITS AND THE LIQ INDEX IS CACHED AND WHEN THE LIQUIDITY INDEX IS UPDATED AND THEN WHEN THE USER QUERIES THERI BALANCE, HOW THE INDEXES GET DIVIDED TO YIELD THE ACTUAL RATE TO APPLY TO THE RAW BALANCE. THIS IS WHY THE LAST INDEX IS MULTIPLIED BY THE "CUMULATED INTEREST". REASON FOR QUOTATION IS BECAUSE TECHNICALLY THIS IS THE CUMULATED RATE AND NOT THE CUMULATED INTEREST. THIS IS WHERE THINGS CAN GET MISLEADING. INTEREST IS APPLIED ON THE PRINCIPAL. IN CALCULATELINEARINTEREST THERE IS NO PRINCIPAL. FIND OUT WHAT THAT RATE ACTUALLY MEANS BECAUSE USUALLY RATES ARE IN PERCENTAGES BUT THIS IS JUST IN RAY SO DOES IT MEAN RATE PER TOKEN OR WHAT EXACTLY IS IT.
 
-r = interest rate per period
-t = number of periods
-Principal = initial amount
+TALK ABOUT HOW BOTH RTOKEN AND DEBTTOKEN TECHNICALLY BOTH COMPOUND WHICH IS WHY RAWDEBTBALANCE INCREASES AND SO DOES RTOKEN RAW BALANCE AFTER A CALL. THE INTEREST IS MINTED AND THE USER IS EARNING INTEREST ON THE RAW BALANCE WHICH MEANS A DEPOSITING USER THAT COMPOUNDS MORE OFTEN ENDS UP WITH MORE INTEREST
 
-Example of Linear Interest
-Suppose you deposit $1000 at a 5% annual interest rate, and you calculate interest linearly:
-
-After 1 year:
-
-1000+(1000×0.05×1)=1050
-
-After 2 years:
-1000+(1000×0.05×2)=1100
-After 10 years:
-1000+(1000×0.05×10)=1500
-
-Think of 1.05 as the liquidity index so after one year, the liq index is 1.05, after 2 years, the interest rate accrued over that year is 1.05 which is what calculateLinearInterest gets for us. Then we multiply that by the last index which was also 1.05 i.e. (1.05)^2 or 1.05 * 1.05. This is our new liquidity index. Then in rToken.balanceOf, assume their raw balance started at 1000, after 1 year, their raw balance grows to 1050 and then after 2 years, their full balance is 1050 * 1.05^2/1.05 = 1102.5 which is how all of this makes sense.
-
-Key Insight: The interest is added linearly to the original amount, so it grows in a straight line.
-
-Compound Interest (Multiplication)
-In compound interest, interest is applied to both the principal and the previously accumulated interest.
-This means each period’s interest is calculated on the updated total.
-Formula:
-
-Total Amount=Principal×(1+r)^t
-
-Example of Compound Interest
-Using the same $1000 at a 5% annual rate, but compounded each year:
-
-After 1 year:
-1000×(1.05)=1050
-
-After 2 years:
-1000×(1.05)^2 =1102.5
-
-After 10 years:
-1000×(1.05)^10 =1628.89
-
-Think of 1.05 as the liquidity index so after one year, the liq index is 1.05, after 2 years, the interest rate accrued over that year is 1.05 which is what calculateLinearInterest gets for us. Then we multiply that by the last index which was also 1.05 i.e. (1.05)^2 or 1.05 * 1.05. This is our new liquidity index. Then in rToken.balanceOf, assume their raw balance started at 1000, after 1 year, their raw balance grows to 1050 and then after 2 years, their full balance is 1050 * 1.05^2/1.05 = 1102.5 which is how all of this makes sense.
-
-Key Insight: Instead of growing linearly, the value multiplies each period, leading to exponential growth.
-
-Notice how r which is interest rate per period is different when calculating linearly and when compounding even though the interest rate is the same at 5%. When getting a linear calculation, the interest rate is only considered on the principal amount which is what was said above. So what it means is that only the principal gains interest which is why in the linear calculation, after 2 years, the interest is (0.05(5%) times 2) times 1000. So the interest is only on the original 1000 invested.
-
-In compounding, if i have 1000 principal and it becomes 1050 after a year, in the second year, i am making 5% on my 1050 and not the original 1000 which is the difference between linear and compounding. So r when compounding takes into account the interest gained from the previous year which is why r is 1.05 and not 0.05 when compared to linear calculations.
-
-So we compound the liquidity index by multiplying the previous index by the latest index which is what the idea of compounding is supposed to do. So keep this in mind. With linear calculation, we are always adding but when compounding, we multiply. This is the major take home point.
-
-You might be asking why is interest is calculated linearly but the index gets compounded? This is because the protocol applies an interest rate that grows over time based on a fixed rate per second.
-
-Interest is calculated using:
-Interest Accrued=Rate×Time
-
-This gives us a simple way to determine how much interest has accumulated since the last update.Linear interest calculation is used temporarily to find how much interest should be applied in this period. Compounding happens via the index, so the total value of deposits grows exponentially over multiple time periods.
-
-This formula means that **the liquidity index increases as time passes**, based on the protocol’s interest rate.
-
----
-
-**3️⃣ Example of How Liquidity Index Works**
-
-**Step 1: Initial Conditions**
-
-- The **liquidity index starts at 1e27**.
-- A user deposits **100 DAI** into the pool.
-- The **interest rate is 5% per year**.
-
-  **Step 2: After 1 Year**
-
-- Interest accumulates over time.
-- The **liquidity index increases** based on the 5% rate as seen above.
-- Suppose it increases to **1.05e27**.
-
-Now, the user's **new balance** is:
-
-100 times 1.05e27/1e27 = 105 DAI
-
-**The liquidity index ensures that all users earn interest proportionally based on when they entered the market.**
-
----
-
-**4️⃣ Use Cases of Liquidity Index**
-
-1. **Interest Calculation:**
-
-   - The **liquidity index** allows users to calculate accrued interest without storing individual interest amounts for each deposit.
-
-2. **Accurate Accounting for Depositors & Borrowers:**
-
-   - Users who deposit at **different times** will see their balances grow correctly based on when they entered.
-
-3. **Reducing Storage Costs:**
-   - Instead of tracking interest for every user separately, the liquidity index lets **each user compute their earnings using a single global multiplier**.
-
--
 
 # 2 TAYLOR SERIES EXPANSION, FACTORIALS, MORE ON COMPOUNDING
 
@@ -182,11 +124,9 @@ In reservelibrary::calculateCompoundedInterest, there is the following line:
  return WadRayMath.rayExp(exponent);
 ```
 
-It says the rayExp function uses a taylor series expansion. A taylor expansion is a method of compounding interest. This is how pure compounding is done in solidity and if you look at the rayExp function in WayRadMath.sol, you will see how the function works. I will give a high level off how the taylor expansion compounds values. It is not so dissimilar to how general compounding works which i covered earlier in an example.
+It says the rayExp function uses a taylor series expansion. A taylor expansion is a method of compounding interest. This is how pure compounding is done in solidity and if you look at the rayExp function in WayRadMath.sol, you will see how the function works. I will give a high level overview on how the taylor expansion compounds values. It is not so dissimilar to how general compounding works.
 
 **Overview of Taylor Series Expansion**
-
-The **Taylor series expansion** is a mathematical tool used to approximate functions as an infinite sum of terms calculated from their derivatives at a single point. It is widely used in numerical analysis, physics, and engineering to approximate complex functions.
 
 For a function f(x), the Taylor series expansion around x = 0 (also called the **Maclaurin series**) is:
 
