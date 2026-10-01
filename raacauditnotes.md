@@ -120,7 +120,7 @@ At the start of the lending pool system, the liquidity index starts at 1 and so 
     - RToken::mint(address(this), msg.sender, 100e18, 1e27) runs
       - _mintUserInterest(msg.sender, 1e27) runs
         userBalance = 0;
-        _userState[user].index = 1e27; (this is the main reason why the liquidity index is implemented and we will see why shortly)
+        _userState[userA].index = 1e27; (this is the main reason why the liquidity index is implemented and we will see why shortly)
         return 0;
       userIncrease = 0;
       _rawTotalDeposits += 100e18;
@@ -207,67 +207,69 @@ LendingPool::borrow ends
     - calculateLiquidityIndex(22050000000000000000000000 [2.205e25],10000,1e27) runs
      - calculateLinearInterest(22050000000000000000000000 [2.205e25],10000,1e27) runs
        cumulatedInterest = 22050000000000000000000000 [2.205e25] * 10000/SECONDS_PER_YEAR == 6992009132420091324200
-       return WadRayMath.RAY + 6992009132420091324200 == 1000006992009132420091324200; //c The reason why calculateLinearInterest adds 1e27 to the cumulated interest is best explained with an example. Assume a user with a principal of $1000 deposits the funds in an account that earns 5% interest annually. After 1 year, the earned interest is 1000 * 0.05 = 50 so the total interest is 1000 + 50 = 1050. Another way to evaluate the total interest is 1000 * 1.05 = 1050. This is why the cumulated "interest" added to 1e27 is equivalent to adding 1 to the rate. The rate is then directly multiplied Assume 1e27 is 1 and cumulated interest is the rate over timeDelta (10000)). The other point I needed to explain is the misconception of the function declaration. The function name is calculateLinearInterest but technically, there is no interest being evaluated in this function whatsoever. The cumulatedInterest variable would be less misleading if it was named cumulated rate because that is what it is being evaluated in calculateLinearInterest. cumulatedInterest = rate * timeDelta / SECONDS_PER_YEAR. The aim is to calculate the interest rate over a certain amount of time that has passed. Think of this formula as rate/SECONDS_PER_YEAR * timeDelta. We know time delta is going to be in seconds and rate is the annual interest rate. By dividing the annual rate by the amount of seconds in a year, what this gives is the interest rate per second. Multiplying the interest rate per second by the amount of seconds that have passed will give us the rate to apply over time delta which is the return value of calculateLinearInterest
+       return WadRayMath.RAY + 6992009132420091324200 == 1000006992009132420091324200; //c The reason why calculateLinearInterest adds 1e27 to the cumulated interest is best explained with an example. Assume a user with a principal of $1000 deposits the funds in an account that earns 5% interest annually. After 1 year, the earned interest is 1000 * 0.05 = 50 so the total interest is 1000 + 50 = 1050. Another way to evaluate the total interest is 1000 * 1.05 = 1050. This is why the cumulated "interest" being added to 1e27 is equivalent to adding 1 to the rate of 0.05 in our example. The rate is then directly multiplied by whatever principal the user has over timeDelta to get the new balance of the user which we will see shortly. Assume 1e27 is 1 and cumulated interest is the rate over timeDelta (10000)). The other point I needed to explain is the misconception of the function declaration. The function name is calculateLinearInterest but technically, there is no interest being evaluated in this function whatsoever. The cumulatedInterest variable would be less misleading if it was named cumulated rate because that is what it is being evaluated in calculateLinearInterest. cumulatedInterest = rate * timeDelta / SECONDS_PER_YEAR. The aim is to calculate the interest rate over a certain amount of time that has passed. Think of this formula as rate/SECONDS_PER_YEAR * timeDelta. We know time delta is going to be in seconds and rate is the annual interest rate. By dividing the annual rate by the amount of seconds in a year, what this gives is the interest rate per second. Multiplying the interest rate per second by the amount of seconds that have passed will give us the rate to apply over time delta which is the return value of calculateLinearInterest. The reason why the function is described as "linear" is because the same rate is applied over the full timeDelta. So we assume the principal is fixed and earning the same rate over timeDelta.
        
-    return 1e27.rayMul(1e27).toUint128() == 1e27 (remember that one of the things we aim to prove with this example is why this multiplication happens here which we will go into shortly)
-      reserve.liquidityIndex = 1e27;
+    return 1000006992009132420091324200.rayMul(1e27).toUint128() == 1000006992009132420091324200 (remember that one of the things we aim to prove with this example is why this multiplication happens here which we will go into shortly)
+      reserve.liquidityIndex = 1000006992009132420091324200;
     
-    - calculateUsageIndex(0,3000,1e27) runs
-      - calculateCompoundedInterest(0,3000) runs
-        ratePerSecond = 0;
-        exponent = 0;
-        return WadRayMath.rayExp(0) == 1e27; (we go into what this rayExp function does in a different section but keep in mind for now that usageRate is 0 so the usageIndex does not change over timeDelta which is why the usageIndex is still 1e27)
-        reserve.usageIndex = 1e27;
-        reserve.lastUpdateTimestamp = 5000;
+    - calculateUsageIndex(3.5e25,10000,1e27) runs
+      - calculateCompoundedInterest(3.5e25,10000) runs
+        ratePerSecond = 3.5e25.rayDiv(SECONDS_PER_YEAR) == 1109842719431760527650938609842719431760527651 [1.109e45];
+        exponent = 1109842719431760527650938609842719431760527651.rayMul(10000) == 11098427194317605276509 [1.109e22];
+        return WadRayMath.rayExp(11098427194317605276509) == 1000011098488782088541313989; (we go into what this rayExp function does in a different section but the reasoning why the exponent is used is because the same rate is not applied over timeDelta like line 210. The idea is to answer the question that if after every second of timeDelta, the rate is applied on the principal and the new amount becomes the principal and keeps earning rewards at that rate and this loop keeps happening at each second for the full timeDelta, what will the rate be ? Assume the rate for the full timeDelta (10000) is 5%, if the principal is $1000 and this rate is applied linearly, at the end of the period, the amount would be 1050. However, what if the rate is applied per second. rps = 0.000005. So after 1 second, the new balance is 1000.05. After 2 seconds, the new balance is 1000.05 * rps == 1000.050003 and so on. If this happens every second until 10000 seconds have passed, the final balance is 1051.270965 which is more than the 1050 that would have resulted from a pure linear application which is implemented in calculateLinearInterest. The rationale is to ensure that the rate applied to borrowers grows faster than the rate applied to lenders which is why the usage rate over timeDelta uses exponential evaluation while liquidity rate over timeDelta uses linear evaluation. Also note that the first term of the taylor expansion (WadRayMath.rayExp) is 1 + x which is equivalent to the linear rate return value of WadRayMath.RAY + x from line 210 in case you were wondering how the ray addition translates to the rayExp function)
+        reserve.usageIndex = 1000011098488782088541313989;
+        reserve.lastUpdateTimestamp = 15000;
 
         //c we are skipping the reserve.scaledPendingProtocolFee evaluation in updateReserveInterests as that is not relevant to this explanation
 
-    - RToken::mint(address(this), msg.sender, 100e18, 1e27) runs
-      - _mintUserInterest(msg.sender, 1e27) runs
-        userBalance = 0;
-        _userState[user].index = 1e27; (this is the main reason why the liquidity index is implemented and we will see why shortly)
-        return 0;
-      userIncrease = 0;
-      _rawTotalDeposits += 100e18;
-      - _mint(msg.sender, 100e18)
-        user A rToken balance == 100e18
-        amountMinted = 100e18.
+    - RToken::mint(address(this), msg.sender, 200e18, 1000006992009132420091324200) runs
+      - _mintUserInterest(msg.sender, 1000006992009132420091324200) runs
+        userBalance = 100e18;
+        indexMultiplier = 1000006992009132420091324200.rayDiv(1e27) == 1000006992009132420091324200;
+        scaledBalance = 100000699200913242009 (this is why the liquidity and usage indexes are implemented. on line 123, we saw that after user A deposited, the liquidity index at the timestamp 5000 was cached in _userState[userA].index as 1e27. The question that the indexes answer which I posed on line 87 was how do we know what rate to apply to each user at any given time ? Well this is how. User A deposits now at ts 15000 so how we know what rate to apply to user A's principal of 100e18 is because the global liquidity index multiplies all the previous rates up to the current timestamp and _userState[user].index has all the rates that user A has claimed. Therefore, indexMultiplier divides both values to yield the rate that has not yet been applied to user A. This is the point of the multiplication posed on line 87).
+        _userState[userA].index = 1000006992009132420091324200;
+      userIncrease = 100000699200913242009 - 100e18 == 699200913242009;
+      _mint(userA, 699200913242009) runs and increases the raw balance of user A to 100000699200913242009
+      _rawTotalDeposits += 100e18 + 200e18.rayDiv(1000006992009132420091324200) == 299998601607951085958;
+      - _mint(userA, 200e18)
+        user A rToken balance == 300000699200913242009
+        amountMinted = 200e18.
 
-      - updateInterestRatesAndLiquidity(reserve, rateData, 100e18, 0) runs
-        reserve.totalLiquidity = 100e18
-        reserve.totalUsage = 0;
-        - calculateUtilizationRate(100e18,0) runs
-          return 0; (totalUsage is 0 which means none of the liquidity is borrowed with means util rate is 0)
-          rateData.currentUtilizationRate = 0;
-        - calculateBorrowRate(7e25, 1.75e25, 3.5e25,8.363e26,8e26,0) runs (the arguments are evaluated based on the expected rates from the lending pool constructor)
-          return 0; (utilization rate is 0 i.e. no one has borrowed anything so the usage rate should be 0)
-          rateData.currentUsageRate = 0;
-        - calculateLiquidityRate(0, 0, 1e26, 0) runs (the arguments are evaluated based on the expected rates from the lending pool constructor)
-          return 0; (totalUsage is 0 which means no one has borrowed. lenders are paid from borrowers so no borrows means no liquidity rate)
-          rateData.currentLiquidityRate = 0;
-          rateData.currentProtocolFeeRate = 0; //c this variable is useless
+      - updateInterestRatesAndLiquidity(reserve, rateData, 200e18, 0) runs
+        reserve.totalLiquidity = 230e18
+        reserve.totalUsage = 70e18.rayMul(1000011098488782088541313989) == 70000776894214746198;
+        - calculateUtilizationRate(230e18,70000776894214746198) runs
+         - uint256 utilizationRate = 70000776894214746198.rayDiv(230e18 + 70000776894214746198).toUint128() == 233335318724518443864709545 [2.333e26];
+          return 233335318724518443864709545 [2.333e26]; 
+          rateData.currentUtilizationRate = 233335318724518443864709545 [2.333e26];
+        - calculateBorrowRate(7e25, 1.75e25, 3.5e25,8.363e26,8e26,233335318724518443864709545) runs (the arguments are evaluated based on the expected rates from the lending pool constructor)
+          return 3.5e25; (utilization rate is < optimalUtilizationRate which means the usage rate = optimal rate)
+          rateData.currentUsageRate = 3.5e25;
+       - calculateLiquidityRate(233335318724518443864709545, 3.5e25, 1e26, 70000776894214746198) runs (the arguments are evaluated based on the expected rates from the lending pool constructor)
+          uint256 grossLiquidityRate = 70000776894214746198.rayMul(3.5e25) == 8166736155358145535264834 [8.166e24]
+          uint256 netProtocolFeeRate = 8.166e24.rayMul(1e26) == 816673615535814553526483 [8.166e23];
+          uint256 netLiquidityRate = 8166736155358145535264834 - 816673615535814553526483 == 7350062539822330981738351 [7.35e24];
+          return (7350062539822330981738351 [7.35e24],816673615535814553526483 [8.166e23]);
+          rateData.currentLiquidityRate = 7350062539822330981738351 [7.35e24];
+          rateData.currentProtocolFeeRate = 816673615535814553526483 [8.166e23]; //c this variable is useless
+
       
 - ReserveLibrary::deposit ends.
   We don't care about anything else that happens in LendingPool::deposit for the purposes of this example.
 
-
-
-  
-COVER THE FULL CALCULATION FROM WHEN A USER FIRST DEPOSITS, ANOTHER USER BORROWS AND THE RATES ARE UPDATED AND TIME PASSES WHICH ACCRUES INTEREST AND THEN A USER DEPOSITS AND THE LIQ INDEX IS CACHED AND WHEN THE LIQUIDITY INDEX IS UPDATED AND THEN WHEN THE USER QUERIES THERI BALANCE, HOW THE INDEXES GET DIVIDED TO YIELD THE ACTUAL RATE TO APPLY TO THE RAW BALANCE. THE KEY DIFFERENCE IS HOW THE RATE IS CUMULATED FOR LENDERS VS BORROWERS WHICH IS WHERE THE DIFFERENCE IS. FOR LENDERS, IT IS SIMPLY ADDED TO RAY. AT THE END OF THE EXPLANATION, LINK THE INDEX EXPLAANTION TO HOW THE GAUGES USE AN INTEGRAL AND THE MATURITY VAULT HAS ACCUNREALISEDFRACTION. THE IDEA IS THE SAME WITH THESE INDEXES
-
-TALK ABOUT HOW BOTH RTOKEN AND DEBTTOKEN TECHNICALLY BOTH COMPOUND WHICH IS WHY RAWDEBTBALANCE INCREASES AND SO DOES RTOKEN RAW BALANCE AFTER A CALL. THE INTEREST IS MINTED AND THE USER IS EARNING INTEREST ON THE RAW BALANCE WHICH MEANS A DEPOSITING USER THAT COMPOUNDS MORE OFTEN ENDS UP WITH MORE INTEREST
+The above explanation should give enough depth into whatever you need to know about how the liquidity and usage indexes work as well as some key internals on how the lending pool system works. A lot of smart contracts use the same index logic with minor caveats. See io10reviewv3/contracts/core/lockers/RAACMaturityVault.sol's accUnrealisedFraction logic or io10reviewv3/contracts/core/governance/gauges/BaseGauge.sol's integral logic which contain detailed explanations on how these concepts work and this should show the similarities with the liquidity and usage indexes.
 
 
 # 2 TAYLOR SERIES EXPANSION, FACTORIALS, MORE ON COMPOUNDING
 
-In reservelibrary::calculateCompoundedInterest, there is the following line:
+In ReserveLibrary::calculateCompoundedInterest, there is the following line:
 
 ```solidity
  // Will use a taylor series expansion (7 terms)
  return WadRayMath.rayExp(exponent);
 ```
 
-It says the rayExp function uses a taylor series expansion. A taylor expansion is a method of compounding interest. This is how pure compounding is done in solidity and if you look at the rayExp function in WayRadMath.sol, you will see how the function works. I will give a high level overview on how the taylor expansion compounds values. It is not so dissimilar to how general compounding works.
+It says the rayExp function uses a taylor series expansion. A taylor expansion is a method used to compound interest. This is how pure compounding is done in solidity and if you look at the rayExp function in WayRadMath.sol, you will see how the function works. I will give a high level overview on how the taylor expansion compounds values. It is not so dissimilar to how general compounding works.
 
 **Overview of Taylor Series Expansion**
 
@@ -292,6 +294,8 @@ e^x = (1 + x) + x^2/2! + x^3/3! + x^4/4! + x^5/5! + ....
 This formula is **especially useful for computing compounding growth**, as seen in finance and blockchain applications. So in the above case, f(x) is e^x.
 
 We can specify how many terms in the taylor series we want to use. What I mean by terms is simply how many terms are in the formula. So if you literally count how many terms are in this formula, you will see there are 5 terms.
+
+The natural next question would be what an exponent actually is and this is covered in section 21 in io10reviewv3/IO10AuditFiles/GeneralLearning/ConceptDump.md which will make the required connection between the exponent(e) and the example on line 219
 
 ---
 
