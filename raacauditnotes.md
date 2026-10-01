@@ -27,7 +27,6 @@ The formula typically used to calculate liquidity index was used in RAAC in the 
     ) internal pure returns (uint256) {
         uint256 cumulatedInterest = rate * timeDelta; 
         cumulatedInterest = cumulatedInterest / SECONDS_PER_YEAR;
-        //c let me explain what the above 2 lines are trying to do. The aim is to calculate the interest rate over a certain amount of time that has passed. Think of this formula as rate/SECONDS_PER_YEAR * timeDelta. We know time delta is going to be in seconds and rate is the annual interest rate. By dividing the annual rate by the amount of seconds in a year, what this gives is the interest rate per second. Multiplying the interest rate per second by the amount of seconds that have passed will give us the amount of interest that cumulated in time delta. 
         return WadRayMath.RAY + cumulatedInterest;
         /*c then the amount of interest that cumulated in time delta is added to 1e27 to make the cummulative interest have ray precision. For example, say rate = 0.2e27 (20% in ray) and timedelta is 100, if you do rate/SECONDS_PER_YEAR * timeDelta, the rate over timeDelta will be 3.171e21
         
@@ -208,7 +207,8 @@ LendingPool::borrow ends
     - calculateLiquidityIndex(22050000000000000000000000 [2.205e25],10000,1e27) runs
      - calculateLinearInterest(22050000000000000000000000 [2.205e25],10000,1e27) runs
        cumulatedInterest = 22050000000000000000000000 [2.205e25] * 10000/SECONDS_PER_YEAR == 6992009132420091324200
-       return WadRayMath.RAY + 6992009132420091324200 == 1e27; (the reason why we add 1e27 to the linear "interest" will be covered shortly when cumulatedInterest is non zero for better visibility. for now, just keep in mind that the liquidity rate is 0 so over timeDelta, there is no rate to apply over timeDelta which is why cumulatedInterest is 0)
+       return WadRayMath.RAY + 6992009132420091324200 == 1000006992009132420091324200; //c The reason why calculateLinearInterest adds 1e27 to the cumulated interest is best explained with an example. Assume a user with a principal of $1000 deposits the funds in an account that earns 5% interest annually. After 1 year, the earned interest is 1000 * 0.05 = 50 so the total interest is 1000 + 50 = 1050. Another way to evaluate the total interest is 1000 * 1.05 = 1050. This is why the cumulated "interest" added to 1e27 is equivalent to adding 1 to the rate. The rate is then directly multiplied Assume 1e27 is 1 and cumulated interest is the rate over timeDelta (10000)). The other point I needed to explain is the misconception of the function declaration. The function name is calculateLinearInterest but technically, there is no interest being evaluated in this function whatsoever. The cumulatedInterest variable would be less misleading if it was named cumulated rate because that is what it is being evaluated in calculateLinearInterest. cumulatedInterest = rate * timeDelta / SECONDS_PER_YEAR. The aim is to calculate the interest rate over a certain amount of time that has passed. Think of this formula as rate/SECONDS_PER_YEAR * timeDelta. We know time delta is going to be in seconds and rate is the annual interest rate. By dividing the annual rate by the amount of seconds in a year, what this gives is the interest rate per second. Multiplying the interest rate per second by the amount of seconds that have passed will give us the rate to apply over time delta which is the return value of calculateLinearInterest
+       
     return 1e27.rayMul(1e27).toUint128() == 1e27 (remember that one of the things we aim to prove with this example is why this multiplication happens here which we will go into shortly)
       reserve.liquidityIndex = 1e27;
     
@@ -252,17 +252,8 @@ LendingPool::borrow ends
 
 
 
-    
-
-
   
-        
-
-    
-    
- 
-
-COVER THE FULL CALCULATION FROM WHEN A USER FIRST DEPOSITS, ANOTHER USER BORROWS AND THE RATES ARE UPDATED AND TIME PASSES WHICH ACCRUES INTEREST AND THEN A USER DEPOSITS AND THE LIQ INDEX IS CACHED AND WHEN THE LIQUIDITY INDEX IS UPDATED AND THEN WHEN THE USER QUERIES THERI BALANCE, HOW THE INDEXES GET DIVIDED TO YIELD THE ACTUAL RATE TO APPLY TO THE RAW BALANCE. THIS IS WHY THE LAST INDEX IS MULTIPLIED BY THE "CUMULATED INTEREST". REASON FOR QUOTATION IS BECAUSE TECHNICALLY THIS IS THE CUMULATED RATE AND NOT THE CUMULATED INTEREST. THIS IS WHERE THINGS CAN GET MISLEADING. INTEREST IS APPLIED ON THE PRINCIPAL. IN CALCULATELINEARINTEREST THERE IS NO PRINCIPAL. THE RATE IS REPRESENTED IN RAY JUST LIKE IF YOU HAVE A RATE OF 1%, IN DECIMAL, THAT IS 0.01. IN RAY, THAT IS 1E25. SO IT IS NOT CUMULATED INTEREST, IT IS CUMULATED RATE. THE KEY DIFFERENCE IS HOW THE RATE IS CUMULATED FOR LENDERS VS BORROWERS WHICH IS WHERE THE DIFFERENCE IS. FOR LENDERS, IT IS SIMPLY ADDED TO RAY. THE REASON IS SIMPLE. IF YOU HAVE 1000 AT 10% A YEAR, IT IS THE SAME AS 1000 * 1.10 BECAUSE ADDING 1 PRESERVES THE PRINCIPAL. 1000 * 0.10 == 100. 1000 * 1.10 == 1100. ITS A MATH TRICK. THE FACT THAT IT IS CALLED LINEAR INTEREST IS BECAUSE THE RATE IS APPLIED ON WHATEVER THE PRINCIPAL IS . AT THE END OF THE EXPLANATION, LINK THE INDEX EXPLAANTION TO HOW THE GAUGES USE AN INTEGRAL AND THE MATURITY VAULT HAS ACCUNREALISEDFRACTION. THE IDEA IS THE SAME WITH THESE INDEXES
+COVER THE FULL CALCULATION FROM WHEN A USER FIRST DEPOSITS, ANOTHER USER BORROWS AND THE RATES ARE UPDATED AND TIME PASSES WHICH ACCRUES INTEREST AND THEN A USER DEPOSITS AND THE LIQ INDEX IS CACHED AND WHEN THE LIQUIDITY INDEX IS UPDATED AND THEN WHEN THE USER QUERIES THERI BALANCE, HOW THE INDEXES GET DIVIDED TO YIELD THE ACTUAL RATE TO APPLY TO THE RAW BALANCE. THE KEY DIFFERENCE IS HOW THE RATE IS CUMULATED FOR LENDERS VS BORROWERS WHICH IS WHERE THE DIFFERENCE IS. FOR LENDERS, IT IS SIMPLY ADDED TO RAY. AT THE END OF THE EXPLANATION, LINK THE INDEX EXPLAANTION TO HOW THE GAUGES USE AN INTEGRAL AND THE MATURITY VAULT HAS ACCUNREALISEDFRACTION. THE IDEA IS THE SAME WITH THESE INDEXES
 
 TALK ABOUT HOW BOTH RTOKEN AND DEBTTOKEN TECHNICALLY BOTH COMPOUND WHICH IS WHY RAWDEBTBALANCE INCREASES AND SO DOES RTOKEN RAW BALANCE AFTER A CALL. THE INTEREST IS MINTED AND THE USER IS EARNING INTEREST ON THE RAW BALANCE WHICH MEANS A DEPOSITING USER THAT COMPOUNDS MORE OFTEN ENDS UP WITH MORE INTEREST
 
